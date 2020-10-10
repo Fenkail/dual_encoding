@@ -1,7 +1,7 @@
 import os
 import logging
 
-ROOT_PATH=os.path.join(os.environ['HOME'], 'VisualSearch')
+ROOT_PATH=os.path.join(os.environ['HOME'], 'PycharmProjects/dual_encoding/dataset')
 
 logger = logging.getLogger(__file__)
 logging.basicConfig(

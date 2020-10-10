@@ -127,12 +127,13 @@ def t2i(c2i, vis_details=False, n_caption=5):
     # print("errors matrix shape: ", c2i.shape)
     assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
     ranks = np.zeros(c2i.shape[0])
-
+    # msrvtt (59800,2990)
     for i in range(len(ranks)):
         d_i = c2i[i]
         inds = np.argsort(d_i)
-
-        rank = np.where(inds == i/n_caption)[0][0]
+        # 2990个里面，进行排序，输出排序序号
+        index = int(i/n_caption)
+        rank = np.where(inds == index)[0][0]
         ranks[i] = rank
 
     # Compute metrics
@@ -160,8 +161,8 @@ def i2t(c2i, n_caption=5):
     for i in range(len(ranks)):
         d_i = c2i[:, i]
         inds = np.argsort(d_i)
-
-        rank = np.where(inds/n_caption == i)[0][0]
+        index = int(inds/n_caption)
+        rank = np.where(index == i)[0][0]
         ranks[i] = rank
 
     # Compute metrics
@@ -187,7 +188,8 @@ def t2i_map(c2i, n_caption=5):
     for i in range(c2i.shape[0]):
         d_i = c2i[i, :]
         labels = [0]*len(d_i)
-        labels[i/n_caption] = 1
+        index = int(i/n_caption)
+        labels[index] = 1
 
         sorted_labels = [labels[x] for x in np.argsort(d_i)]
         current_score = scorer.score(sorted_labels)
@@ -231,8 +233,8 @@ def t2i_inv_rank(c2i, n_caption=1):
     for i in range(len(inv_ranks)):
         d_i = c2i[i,:]
         inds = np.argsort(d_i)
-
-        rank = np.where(inds == i/n_caption)[0]
+        index = int(i/n_caption)
+        rank = np.where(inds == index)[0]
         inv_ranks[i] = sum(1.0 / (rank +1 ))
 
     return np.mean(inv_ranks)
@@ -251,8 +253,8 @@ def i2t_inv_rank(c2i, n_caption=1):
     for i in range(len(inv_ranks)):
         d_i = c2i[:, i]
         inds = np.argsort(d_i)
-
-        rank = np.where(inds/n_caption == i)[0]
+        index = int(inds/n_caption)
+        rank = np.where(index == i)[0]
         inv_ranks[i] = sum(1.0 / (rank +1 ))
 
     return np.mean(inv_ranks)

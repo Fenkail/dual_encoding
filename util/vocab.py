@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*-
 # Create a vocabulary wrapper
 from __future__ import print_function
 import pickle
@@ -94,7 +95,7 @@ def main(option):
     collection = option.collection
     threshold = option.threshold
     text_style = option.text_style
-
+    # 文件地址名称相关
     vocab_file = os.path.join(rootpath, collection, 'TextData', 'vocabulary', 
             text_style, 'word_vocab_%d.pkl'%threshold)
     counter_file = os.path.join(os.path.dirname(vocab_file), 'word_vocab_counter_%s.txt'%threshold)
@@ -103,12 +104,12 @@ def main(option):
         sys.exit(0)
     makedirsforfile(vocab_file)
 
-
+    # 建立词表 pickle被reload时，可以更好的被内存调用，不需要经过数据格式的转换，其他的读取调用都是字符形式
     vocab, word_counter = build_vocab(collection, text_style, threshold=threshold, rootpath=rootpath)
     with open(vocab_file, 'wb') as writer:
         pickle.dump(vocab, writer, pickle.HIGHEST_PROTOCOL)
     logger.info("Saved vocabulary file to %s", vocab_file)
-
+    # 词统计
     word_counter = [(word, cnt) for word, cnt in word_counter.items() if cnt >= threshold]
     word_counter.sort(key=lambda x: x[1], reverse=True)
     with open(counter_file, 'w') as writer:

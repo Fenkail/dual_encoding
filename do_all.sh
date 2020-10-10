@@ -4,8 +4,8 @@ testCollection=$3
 concate=$4
 overwrite=0
 
-# Generate a vocabulary on the training set
-./do_get_vocab.sh $trainCollection
+# # Generate a vocabulary on the training set
+# ./do_get_vocab.sh $trainCollection
 
 # training
 gpu=0

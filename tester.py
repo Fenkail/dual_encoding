@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*-
 from __future__ import print_function
 import pickle
 import os
@@ -24,13 +25,13 @@ from basic.common import makedirsforfile, checkToSkip
 def parse_args():
     # Hyper Parameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('testCollection', type=str, help='test collection')
+    parser.add_argument('--testCollection', type=str, default='msrvtt10ktest',help='test collection')
     parser.add_argument('--rootpath', type=str, default=ROOT_PATH, help='path to datasets. (default: %s)'%ROOT_PATH)
     parser.add_argument('--overwrite', type=int, default=0, choices=[0,1],  help='overwrite existed file. (default: 0)')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
     parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
     parser.add_argument('--workers', default=5, type=int, help='Number of data loader workers.')
-    parser.add_argument('--logger_name', default='runs', help='Path to save the model and Tensorboard log.')
+    parser.add_argument('--logger_name', default='model', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--checkpoint_name', default='model_best.pth.tar', type=str, help='name of checkpoint (default: model_best.pth.tar)')
     parser.add_argument('--n_caption', type=int, default=20, help='number of captions of each image/video (default: 1)')
 
@@ -55,7 +56,7 @@ def main():
         logging.info(resume + ' not exists.')
         sys.exit(0)
 
-
+    # 模型加载
     checkpoint = torch.load(resume)
     start_epoch = checkpoint['epoch']
     best_rsum = checkpoint['best_rsum']
@@ -64,7 +65,7 @@ def main():
     options = checkpoint['opt']
     if not hasattr(options, 'concate'):
         setattr(options, "concate", "full")
-
+    # 文件名称
     trainCollection = options.trainCollection
     output_dir = resume.replace(trainCollection, testCollection)
     output_dir = output_dir.replace('/%s/' % options.cv_name, '/results/%s/' % trainCollection )
@@ -118,7 +119,7 @@ def main():
         video_ids = video_ids[::opt.n_caption]
 
     c2i_all_errors = evaluation.cal_error(video_embs, cap_embs, options.measure)
-    torch.save({'errors': c2i_all_errors, 'videos': video_ids, 'captions': caption_ids}, pred_error_matrix_file)    
+    # torch.save({'errors': c2i_all_errors, 'videos': video_ids, 'captions': caption_ids}, pred_error_matrix_file)    
     print("write into: %s" % pred_error_matrix_file)
 
 

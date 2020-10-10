@@ -104,5 +104,5 @@ if __name__ == '__main__':
 
 
     for name,vec in zip(renamed, vectors):
-        print name, vec
+        print (name, vec)
 

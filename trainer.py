@@ -16,8 +16,7 @@ from util.text2vec import get_text_encoder
 from model import get_model, get_we_parameter
 
 import logging
-import tensorboard_logger as tb_logger
-
+import tensorboard_logger
 import argparse
 
 from basic.constant import ROOT_PATH
