@@ -16,7 +16,7 @@ from util.text2vec import get_text_encoder
 from model import get_model, get_we_parameter
 
 import logging
-import tensorboard_logger
+import tensorboard_logger as tb_logger
 import argparse
 
 from basic.constant import ROOT_PATH
@@ -33,9 +33,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootpath', type=str, default=ROOT_PATH,
                         help='path to datasets. (default: %s)'%ROOT_PATH)
-    parser.add_argument('trainCollection', type=str, help='train collection')
-    parser.add_argument('valCollection', type=str,  help='validation collection')
-    parser.add_argument('testCollection', type=str,  help='test collection')
+    parser.add_argument('--trainCollection', type=str, default='msrvtt10ktrain', help='train collection')
+    parser.add_argument('--valCollection', type=str, default='msrvtt10kval', help='validation collection')
+    parser.add_argument('--testCollection', type=str, default='msrvtt10ktest',  help='test collection')
     parser.add_argument('--n_caption', type=int, default=20, help='number of captions of each image/video (default: 1)')
     parser.add_argument('--overwrite', type=int, default=0, choices=[0,1], help='overwrite existed file. (default: 0)')
     # model
@@ -49,13 +49,13 @@ def parse_args():
     parser.add_argument('--text_rnn_size', type=int, default=512, help='text rnn encoder size. (default: 1024)')
     parser.add_argument('--text_kernel_num', default=512, type=int, help='number of each kind of text kernel')
     parser.add_argument('--text_kernel_sizes', default='2-3-4', type=str, help='dash-separated kernel size to use for text convolution')
-    parser.add_argument('--text_norm', action='store_true', help='normalize the text embeddings at last layer')
+    parser.add_argument('--text_norm', action='store_false', help='normalize the text embeddings at last layer')
     # video-side multi-level encoding
     parser.add_argument('--visual_feature', type=str, default='resnet-152-img1k-flatten0_outputos', help='visual feature.')
     parser.add_argument('--visual_rnn_size', type=int, default=1024, help='visual rnn encoder size')
     parser.add_argument('--visual_kernel_num', default=512, type=int, help='number of each kind of visual kernel')
     parser.add_argument('--visual_kernel_sizes', default='2-3-4-5', type=str, help='dash-separated kernel size to use for visual convolution')
-    parser.add_argument('--visual_norm', action='store_true', help='normalize the visual embeddings at last layer')
+    parser.add_argument('--visual_norm', action='store_false', help='normalize the visual embeddings at last layer')
     # common space learning
     parser.add_argument('--text_mapping_layers', type=str, default='0-2048', help='text fully connected layers for common space learning. (default: 0-2048)')
     parser.add_argument('--visual_mapping_layers', type=str, default='0-2048', help='visual fully connected layers  for common space learning. (default: 0-2048)')
@@ -127,8 +127,8 @@ def main():
     tb_logger.configure(opt.logger_name, flush_secs=5)
 
 
-    opt.text_kernel_sizes = map(int, opt.text_kernel_sizes.split('-'))
-    opt.visual_kernel_sizes = map(int, opt.visual_kernel_sizes.split('-'))
+    opt.text_kernel_sizes = list(map(int, opt.text_kernel_sizes.split('-')))
+    opt.visual_kernel_sizes = list(map(int, opt.visual_kernel_sizes.split('-')))
     # collections: trian, val
     collections = {'train': trainCollection, 'val': valCollection}
     cap_file = {'train': '%s.caption.txt'%trainCollection, 
@@ -160,8 +160,8 @@ def main():
         opt.we_parameter = get_we_parameter(rnn_vocab, w2v_data_path)
 
     # mapping layer structure
-    opt.text_mapping_layers = map(int, opt.text_mapping_layers.split('-'))
-    opt.visual_mapping_layers = map(int, opt.visual_mapping_layers.split('-'))
+    opt.text_mapping_layers = list(map(int, opt.text_mapping_layers.split('-')))
+    opt.visual_mapping_layers = list(map(int, opt.visual_mapping_layers.split('-')))
     if opt.concate == 'full':
         opt.text_mapping_layers[0] = opt.bow_vocab_size + opt.text_rnn_size*2 + opt.text_kernel_num * len(opt.text_kernel_sizes) 
         opt.visual_mapping_layers[0] = opt.visual_feat_dim + opt.visual_rnn_size*2 + opt.visual_kernel_num * len(opt.visual_kernel_sizes)
