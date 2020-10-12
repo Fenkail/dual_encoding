@@ -159,9 +159,9 @@ def i2t(c2i, n_caption=5):
     ranks = np.zeros(c2i.shape[1])
 
     for i in range(len(ranks)):
-        d_i = c2i[:, i]
+        d_i = c2i[:, i]     #shape(59800,)
         inds = np.argsort(d_i)
-        index = int(inds/n_caption)
+        index = (inds/n_caption).astype(int)
         rank = np.where(index == i)[0][0]
         ranks[i] = rank
 

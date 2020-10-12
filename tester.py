@@ -119,6 +119,7 @@ def main():
         video_ids = video_ids[::opt.n_caption]
 
     c2i_all_errors = evaluation.cal_error(video_embs, cap_embs, options.measure)
+    # 模型的存储，目前注释
     # torch.save({'errors': c2i_all_errors, 'videos': video_ids, 'captions': caption_ids}, pred_error_matrix_file)    
     print("write into: %s" % pred_error_matrix_file)
 
