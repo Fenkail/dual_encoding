@@ -300,55 +300,55 @@ def validate(opt, val_loader, model, measure='cosine'):
     # so we get the video set and mask out same videos with feature_mask
 
     c2i_all_errors = evaluation_vatex.cal_error(video_embs, cap_embs, measure)
-    if opt.val_metric == "recall":
-
-        # video retrieval
-
-        (r1i, r5i, r10i, medri, meanri) = evaluation_vatex.t2i(c2i_all_errors, n_caption=opt.n_caption)
-        print(" * Text to video:")
-        print(" * r_1_5_10: {}".format([round(r1i, 3), round(r5i, 3), round(r10i, 3)]))
-        print(" * medr, meanr: {}".format([round(medri, 3), round(meanri, 3)]))
-        print(" * "+'-'*10)
-
-        # caption retrieval
-        (r1, r5, r10, medr, meanr) = evaluation_vatex.i2t(c2i_all_errors, n_caption=opt.n_caption)
-        print(" * Video to text:")
-        print(" * r_1_5_10: {}".format([round(r1, 3), round(r5, 3), round(r10, 3)]))
-        print(" * medr, meanr: {}".format([round(medr, 3), round(meanr, 3)]))
-        print(" * "+'-'*10)
-
-        # record metrics in tensorboard
-        tb_logger.log_value('r1', r1, step=model.Eiters)
-        tb_logger.log_value('r5', r5, step=model.Eiters)
-        tb_logger.log_value('r10', r10, step=model.Eiters)
-        tb_logger.log_value('medr', medr, step=model.Eiters)
-        tb_logger.log_value('meanr', meanr, step=model.Eiters)
-        tb_logger.log_value('r1i', r1i, step=model.Eiters)
-        tb_logger.log_value('r5i', r5i, step=model.Eiters)
-        tb_logger.log_value('r10i', r10i, step=model.Eiters)
-        tb_logger.log_value('medri', medri, step=model.Eiters)
-        tb_logger.log_value('meanri', meanri, step=model.Eiters)
 
 
-    elif opt.val_metric == "map":
-        i2t_map_score = evaluation_vatex.i2t_map(c2i_all_errors, n_caption=opt.n_caption)
-        t2i_map_score = evaluation_vatex.t2i_map(c2i_all_errors, n_caption=opt.n_caption)
-        tb_logger.log_value('i2t_map', i2t_map_score, step=model.Eiters)
-        tb_logger.log_value('t2i_map', t2i_map_score, step=model.Eiters)
-        print('i2t_map', i2t_map_score)
-        print('t2i_map', t2i_map_score)
+    # video retrieval
+
+    (r1i, r5i, r10i, medri, meanri) = evaluation_vatex.t2i(c2i_all_errors, n_caption=opt.n_caption)
+    print(" * Text to video:")
+    print(" * r_1_5_10: {}".format([round(r1i, 3), round(r5i, 3), round(r10i, 3)]))
+    print(" * medr, meanr: {}".format([round(medri, 3), round(meanri, 3)]))
+    print(" * "+'-'*10)
+
+    # caption retrieval
+    (r1, r5, r10, medr, meanr) = evaluation_vatex.i2t(c2i_all_errors, n_caption=opt.n_caption)
+    print(" * Video to text:")
+    print(" * r_1_5_10: {}".format([round(r1, 3), round(r5, 3), round(r10, 3)]))
+    print(" * medr, meanr: {}".format([round(medr, 3), round(meanr, 3)]))
+    print(" * "+'-'*10)
+
+    # record metrics in tensorboard
+    tb_logger.log_value('r1', r1, step=model.Eiters)
+    tb_logger.log_value('r5', r5, step=model.Eiters)
+    tb_logger.log_value('r10', r10, step=model.Eiters)
+    tb_logger.log_value('medr', medr, step=model.Eiters)
+    tb_logger.log_value('meanr', meanr, step=model.Eiters)
+    tb_logger.log_value('r1i', r1i, step=model.Eiters)
+    tb_logger.log_value('r5i', r5i, step=model.Eiters)
+    tb_logger.log_value('r10i', r10i, step=model.Eiters)
+    tb_logger.log_value('medri', medri, step=model.Eiters)
+    tb_logger.log_value('meanri', meanri, step=model.Eiters)
+
+
+    # map的计算阶段
+    i2t_map_score = evaluation_vatex.i2t_map(c2i_all_errors, n_caption=opt.n_caption)
+    t2i_map_score = evaluation_vatex.t2i_map(c2i_all_errors, n_caption=opt.n_caption)
+    tb_logger.log_value('i2t_map', i2t_map_score, step=model.Eiters)
+    tb_logger.log_value('t2i_map', t2i_map_score, step=model.Eiters)
+    print('i2t_map', i2t_map_score)
+    print('t2i_map', t2i_map_score)
 
     currscore = 0
-    if opt.val_metric == "recall":
-        if opt.direction == 'i2t' or opt.direction == 'all':
-            currscore += (r1 + r5 + r10)
-        if opt.direction == 't2i' or opt.direction == 'all':
-            currscore += (r1i + r5i + r10i)
-    elif opt.val_metric == "map":
-        if opt.direction == 'i2t' or opt.direction == 'all':
-            currscore += i2t_map_score
-        if opt.direction == 't2i' or opt.direction == 'all':
-            currscore += t2i_map_score
+
+    if opt.direction == 'i2t' or opt.direction == 'all':
+        currscore += (r1 + r5 + r10)
+    if opt.direction == 't2i' or opt.direction == 'all':
+        currscore += (r1i + r5i + r10i)
+
+    if opt.direction == 'i2t' or opt.direction == 'all':
+        currscore += i2t_map_score
+    if opt.direction == 't2i' or opt.direction == 'all':
+        currscore += t2i_map_score
 
     tb_logger.log_value('rsum', currscore, step=model.Eiters)
 

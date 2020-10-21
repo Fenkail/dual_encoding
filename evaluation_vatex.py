@@ -42,7 +42,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
     # numpy array to keep all the embeddings
     video_embs = None
     cap_embs = None
-    videoIDs = []
+    videoIDs = set()
     ch_caps = []
     for i, (videoId, cap_tensor, video_tensor, ch_cap) in enumerate(data_loader):
         # make sure val logger is used
@@ -57,9 +57,11 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
             cap_embs = np.zeros((1, cap_emb.size(1)))
 
         # preserve the embeddings by copying from gpu and converting to numpy
-        video_embs = np.vstack((video_embs, (vid_emb.data.cpu().numpy().copy())))
+        for index ,ID in enumerate(videoId):
+            if not ID in videoIDs:
+                video_embs = np.vstack((video_embs, (vid_emb[index].data.cpu().numpy().copy())))
+                videoIDs.add(ID)
         cap_embs = np.vstack((cap_embs, (cap_emb.data.cpu().numpy().copy())))
-        videoIDs.append(videoId)
         ch_caps.append(ch_cap)
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -74,7 +76,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
                         e_log=str(model.logger)))
         del video_tensor, cap_tensor, videoId, ch_cap
     if return_ids == True:
-        return video_embs[1:], cap_embs[1:], videoIDs, ch_caps
+        return video_embs[1:], cap_embs[1:], list(videoIDs), ch_caps
     else:
         return video_embs, cap_embs
 
@@ -119,9 +121,9 @@ def t2i(c2i, vis_details=False, n_caption=5):
     vis_details: if true, return a dictionary for ROC visualization purposes
     """
     # print("errors matrix shape: ", c2i.shape)
-    #TODO 看这里
+
     ranks = np.zeros(c2i.shape[0])
-    n_caption = 1
+
     # vatex (3000,3000)
     for i in range(len(ranks)):
         d_i = c2i[i]
@@ -151,7 +153,7 @@ def i2t(c2i, n_caption=5):
     #remove duplicate videos
     # print("errors matrix shape: ", c2i.shape)
     ranks = np.zeros(c2i.shape[1])
-    n_caption = 1
+
     for i in range(len(ranks)):
         d_i = c2i[:, i]     #shape(59800,)
         inds = np.argsort(d_i)
@@ -196,11 +198,9 @@ def t2i_map(c2i, n_caption=5):
 def i2t_map(c2i, n_caption=5):
     """
     Videos->Text (Video-to-Text Retrieval)
-    c2i: (5N, N) matrix of caption to video errors
+    c2i: (N, N) matrix of caption to video errors
     """
     # print("errors matrix shape: ", c2i.shape)
-    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
-
     scorer = getScorer('AP')
     perf_list = []
     for i in range(c2i.shape[1]):
@@ -218,10 +218,9 @@ def i2t_map(c2i, n_caption=5):
 def t2i_inv_rank(c2i, n_caption=1):
     """
     Text->Videos (Text-to-Video Retrieval)
-    c2i: (5N, N) matrix of caption to video errors
+    c2i: (N, N) matrix of caption to video errors
     n_caption: number of captions of each image/video
     """
-    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
     inv_ranks = np.zeros(c2i.shape[0])
 
     for i in range(len(inv_ranks)):

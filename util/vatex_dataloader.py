@@ -18,7 +18,6 @@ class Dataset2BertI3d(data.Dataset):
         self.frame = []
         cap_files = os.listdir(cap_file)
         for caption in tqdm(cap_files):
-            self.length += 1
             with open(os.path.join(cap_file,caption), 'r') as cap_reader:
                 line = cap_reader.readlines()
                 da_js = json.loads(line[0])
@@ -28,12 +27,14 @@ class Dataset2BertI3d(data.Dataset):
                 ch_embeds = np.array(ch_embeds)
             video_embed = np.load(os.path.join(visual_feat,video_id+'.npy'))[0]
             video_embed = self.video_embed_process(video_embed, videoEmbed_num)
-            self.data.append({
-                'videoID':video_id,
-                'videoEmbed':video_embed,
-                'videoChCaption':ch_captions,
-                'chEmbed':ch_embeds
-            })
+            for ch_embed in ch_embeds:
+                self.length += 1
+                self.data.append({
+                    'videoID':video_id,
+                    'videoEmbed':video_embed,
+                    'videoChCaption':ch_captions,
+                    'chEmbed':ch_embed
+                })
 
     def __getitem__(self, index):
         da_js = self.data[index]

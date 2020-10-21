@@ -187,10 +187,15 @@ class Text_multilevel_encoding(nn.Module):
     def forward(self, text, *args):
         # Embed word ids to vectors
         # Level 1. Global Encoding by Mean Pooling According
-        mean_gru = Variable(torch.zeros(text.size(0), text.size(2))).cuda()
-        for i, batch in enumerate(text):
-            mean_gru[i] = torch.mean(batch[:], 0)
-        org_out = mean_gru
+        #TODO 为了判断文本为批量的均值输入（视频-mean（文本）） 和（视频-文本）  后面整合一下吧，768和10写这里太尬
+        if text.size()[1] == 768:
+            org_out = text
+            text = text.unsqueeze(1)
+        elif text.size()[1] == 10:
+            mean_gru = Variable(torch.zeros(text.size(0), text.size(2))).cuda()
+            for i, batch in enumerate(text):
+                mean_gru[i] = torch.mean(batch[:], 0)
+            org_out = mean_gru
         # Level 2. Temporal-Aware Encoding by biGRU
         gru_init_out, _ = self.rnn(text)
         # Reshape *final* output to (batch_size, hidden_size)
@@ -331,7 +336,6 @@ class Dual_Encoding(BaseModel):
         if torch.cuda.is_available():
             cap_tensor = cap_tensor.cuda()
             video_tensor = video_tensor.cuda()
-
 
         vid_emb = self.vid_encoding(video_tensor)
         cap_emb = self.text_encoding(cap_tensor)
