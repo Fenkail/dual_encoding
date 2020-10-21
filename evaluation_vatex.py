@@ -1,0 +1,316 @@
+from __future__ import print_function
+import os
+import pickle
+import time
+import numpy as np
+from scipy.spatial import distance
+import torch
+from torch.autograd import Variable
+from basic.metric import getScorer
+from basic.util import AverageMeter, LogCollector
+from basic.generic_utils import Progbar
+
+def l2norm(X):
+    """L2-normalize columns of X
+    """
+    norm = np.linalg.norm(X, axis=1, keepdims=True)
+    return 1.0 * X / norm
+
+def cal_error(videos, captions, measure='cosine'):
+    if measure == 'cosine':
+        captions = l2norm(captions)
+        videos = l2norm(videos)
+        errors = -1*np.dot(captions, videos.T)
+    elif measure == 'euclidean':
+        errors = distance.cdist(captions, videos, 'euclidean')
+    return errors
+
+
+
+
+def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True):
+    """Encode all videos and captions loadable by `data_loader`
+    """
+    batch_time = AverageMeter()
+    val_logger = LogCollector()
+
+    # switch to evaluate mode
+    model.val_start()
+
+    end = time.time()
+
+    # numpy array to keep all the embeddings
+    video_embs = None
+    cap_embs = None
+    videoIDs = []
+    ch_caps = []
+    for i, (videoId, cap_tensor, video_tensor, ch_cap) in enumerate(data_loader):
+        # make sure val logger is used
+        model.logger = val_logger
+
+        # compute the embeddings
+        vid_emb, cap_emb = model.forward_emb(videoId, cap_tensor,video_tensor, ch_cap)
+
+        # initialize the numpy arrays given the size of the embeddings
+        if video_embs is None:
+            video_embs = np.zeros((1, vid_emb.size(1)))
+            cap_embs = np.zeros((1, cap_emb.size(1)))
+
+        # preserve the embeddings by copying from gpu and converting to numpy
+        video_embs = np.vstack((video_embs, (vid_emb.data.cpu().numpy().copy())))
+        cap_embs = np.vstack((cap_embs, (cap_emb.data.cpu().numpy().copy())))
+        videoIDs.append(videoId)
+        ch_caps.append(ch_cap)
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        if i % log_step == 0:
+            logging('Test: [{0:2d}/{1:2d}]\t'
+                    '{e_log}\t'
+                    'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                    .format(
+                        i, len(data_loader), batch_time=batch_time,
+                        e_log=str(model.logger)))
+        del video_tensor, cap_tensor, videoId, ch_cap
+    if return_ids == True:
+        return video_embs[1:], cap_embs[1:], videoIDs, ch_caps
+    else:
+        return video_embs, cap_embs
+
+
+
+def encode_text_or_vid(encoder, data_loader, return_ids=True):
+    """Encode all videos and captions loadable by `data_loader`
+    """
+    # numpy array to keep all the embeddings
+    embeddings = None
+    ids = ['']*len(data_loader.dataset)
+    pbar = Progbar(len(data_loader.dataset))
+    for i, (datas, idxs, data_ids) in enumerate(data_loader):
+
+        # compute the embeddings
+        emb = encoder(datas)
+
+        # initialize the numpy arrays given the size of the embeddings
+        if embeddings is None:
+            embeddings = np.zeros((len(data_loader.dataset), emb.size(1)))
+
+        # preserve the embeddings by copying from gpu and converting to numpy
+        embeddings[idxs] = emb.data.cpu().numpy().copy()
+
+        for j, idx in enumerate(idxs):
+            ids[idx] = data_ids[j]
+
+        del datas
+        pbar.add(len(idxs))
+
+    if return_ids == True:
+        return embeddings, ids,
+    else:
+        return embeddings
+
+
+# recall@k, Med r, Mean r for Text-to-Video Retrieval
+def t2i(c2i, vis_details=False, n_caption=5):
+    """
+    Text->Videos (Text-to-Video Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    vis_details: if true, return a dictionary for ROC visualization purposes
+    """
+    # print("errors matrix shape: ", c2i.shape)
+    #TODO 看这里
+    ranks = np.zeros(c2i.shape[0])
+    n_caption = 1
+    # vatex (3000,3000)
+    for i in range(len(ranks)):
+        d_i = c2i[i]
+        inds = np.argsort(d_i)
+        # 3000个里面，进行排序，输出排序序号
+        index = int(i/n_caption)
+        rank = np.where(inds == index)[0][0]
+        ranks[i] = rank
+
+    # Compute metrics
+    r1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
+    r5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
+    r10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
+    medr = np.floor(np.median(ranks)) + 1
+    meanr = ranks.mean() + 1
+
+    return map(float, [r1, r5, r10, medr, meanr])
+
+
+
+# recall@k, Med r, Mean r for Video-to-Text Retrieval
+def i2t(c2i, n_caption=5):
+    """
+    Videos->Text (Video-to-Text Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    """
+    #remove duplicate videos
+    # print("errors matrix shape: ", c2i.shape)
+    ranks = np.zeros(c2i.shape[1])
+    n_caption = 1
+    for i in range(len(ranks)):
+        d_i = c2i[:, i]     #shape(59800,)
+        inds = np.argsort(d_i)
+        index = (inds/n_caption).astype(int)
+        rank = np.where(index == i)[0][0]
+        ranks[i] = rank
+
+    # Compute metrics
+    r1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
+    r5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
+    r10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
+    medr = np.floor(np.median(ranks)) + 1
+    meanr = ranks.mean() + 1
+    return map(float, [r1, r5, r10, medr, meanr])
+
+
+# mAP for Text-to-Video Retrieval
+def t2i_map(c2i, n_caption=5):
+    """
+    Text->Videos (Text-to-Video Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    """
+    # print("errors matrix shape: ", c2i.shape)
+    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
+
+    scorer = getScorer('AP')
+    perf_list = []
+    for i in range(c2i.shape[0]):
+        d_i = c2i[i, :]
+        labels = [0]*len(d_i)
+        index = int(i/n_caption)
+        labels[index] = 1
+
+        sorted_labels = [labels[x] for x in np.argsort(d_i)]
+        current_score = scorer.score(sorted_labels)
+        perf_list.append(current_score)
+
+    return np.mean(perf_list)
+
+
+# mAP for Video-to-Text Retrieval
+def i2t_map(c2i, n_caption=5):
+    """
+    Videos->Text (Video-to-Text Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    """
+    # print("errors matrix shape: ", c2i.shape)
+    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
+
+    scorer = getScorer('AP')
+    perf_list = []
+    for i in range(c2i.shape[1]):
+        d_i = c2i[:, i]
+        labels = [0]*len(d_i)
+        labels[i*n_caption:(i+1)*n_caption] = [1]*n_caption
+
+        sorted_labels = [labels[x] for x in np.argsort(d_i)]
+        current_score = scorer.score(sorted_labels)
+        perf_list.append(current_score)
+
+    return np.mean(perf_list)
+
+
+def t2i_inv_rank(c2i, n_caption=1):
+    """
+    Text->Videos (Text-to-Video Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    n_caption: number of captions of each image/video
+    """
+    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
+    inv_ranks = np.zeros(c2i.shape[0])
+
+    for i in range(len(inv_ranks)):
+        d_i = c2i[i,:]
+        inds = np.argsort(d_i)
+        index = int(i/n_caption)
+        rank = np.where(inds == index)[0]
+        inv_ranks[i] = sum(1.0 / (rank +1 ))
+
+    return np.mean(inv_ranks)
+
+
+
+def i2t_inv_rank(c2i, n_caption=1):
+    """
+    Videos->Text (Video-to-Text Retrieval)
+    c2i: (5N, N) matrix of caption to video errors
+    n_caption: number of captions of each image/video
+    """
+    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
+    inv_ranks = np.zeros(c2i.shape[1])
+
+    for i in range(len(inv_ranks)):
+        d_i = c2i[:, i]
+        inds = np.argsort(d_i)
+        index = int(inds/n_caption)
+        rank = np.where(index == i)[0]
+        inv_ranks[i] = sum(1.0 / (rank +1 ))
+
+    return np.mean(inv_ranks)
+
+
+
+
+def i2t_inv_rank_multi(c2i, n_caption=2):
+    """
+    Text->videos (Image Search)
+    c2i: (5N, N) matrix of caption to image errors
+    n_caption: number of captions of each image/video
+    """
+    # print("errors matrix shape: ", c2i.shape)
+    assert c2i.shape[0] / c2i.shape[1] == n_caption, c2i.shape
+    inv_ranks = np.zeros(c2i.shape[1])
+
+    result = []
+    for i in range(n_caption):
+        idx = range(i, c2i.shape[0], n_caption)
+        sub_c2i = c2i[idx, :]
+        score = i2t_inv_rank(sub_c2i, n_caption=1)
+        result.append(score)
+    return result
+
+
+
+
+# the number of captions are various across videos
+def eval_varied(label_matrix):
+    ranks = np.zeros(label_matrix.shape[0])
+    aps = np.zeros(label_matrix.shape[0])
+
+    for index in range(len(ranks)):
+        rank = np.where(label_matrix[index]==1)[0] + 1
+        ranks[index] = rank[0]
+
+        aps[index] = np.mean([(i+1.)/rank[i] for i in range(len(rank))])
+
+    r1, r5, r10 = [100.0*np.mean([x <= k for x in ranks]) for k in [1, 5, 10]]
+    medr = np.floor(np.median(ranks))
+    meanr = ranks.mean()
+    # mir = (1.0/ranks).mean()
+    mAP = aps.mean()
+
+    return (r1, r5, r10, medr, meanr, mAP)
+
+
+def t2i_varied(c2i_all_errors, caption_ids, video_ids):
+    inds = np.argsort(-c2i_all_errors, axis=1)
+    label_matrix = np.zeros(inds.shape)
+    for index in range(inds.shape[0]):
+        ind = inds[index][::-1]
+        label_matrix[index][np.where(np.array(video_ids)[ind]==caption_ids[index].split('#')[0])[0]]=1
+    return eval_varied(label_matrix)
+
+
+def i2t_varied(c2i_all_errors, caption_ids, video_ids):
+    inds = np.argsort(-c2i_all_errors.T, axis=1)
+    label_matrix = np.zeros(inds.shape)
+    caption_ids = [txt_id.split('#')[0] for txt_id in caption_ids]
+    for index in range(inds.shape[0]):
+        ind = inds[index][::-1]
+        label_matrix[index][np.where(np.array(caption_ids)[ind]==video_ids[index])[0]]=1
+    return eval_varied(label_matrix)

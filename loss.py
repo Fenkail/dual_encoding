@@ -50,7 +50,9 @@ class TripletLoss(nn.Module):
     def forward(self, s, im):
         # compute image-sentence score matrix
         scores = self.sim(im, s)
+        # 只关心对角阵，也就是说只关心同一个视频和文本
         diagonal = scores.diag().view(im.size(0), 1)
+        # 对角【】 按照横和纵扩展出来
         d1 = diagonal.expand_as(scores)
         d2 = diagonal.t().expand_as(scores)
 
