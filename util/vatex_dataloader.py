@@ -27,14 +27,16 @@ class Dataset2BertI3d(data.Dataset):
                 ch_embeds = np.array(ch_embeds)
             video_embed = np.load(os.path.join(visual_feat,video_id+'.npy'))[0]
             video_embed = self.video_embed_process(video_embed, videoEmbed_num)
-            for ch_embed in ch_embeds:
-                self.length += 1
-                self.data.append({
-                    'videoID':video_id,
-                    'videoEmbed':video_embed,
-                    'videoChCaption':ch_captions,
-                    'chEmbed':ch_embed
-                })
+            ch_embed = np.mean(ch_embeds, axis=0)
+
+            self.length += 1
+            self.data.append({
+                'videoID':video_id,
+                'videoEmbed':video_embed,
+                'videoChCaption':ch_captions,
+                'chEmbed':ch_embed
+            })
+                
 
     def __getitem__(self, index):
         da_js = self.data[index]
