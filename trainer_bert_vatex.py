@@ -14,7 +14,7 @@ import util.data_provider as data
 from util.vocab import Vocabulary
 from util.text2vec import get_text_encoder
 from model_vatex import get_model
-from util.vatex_dataloader import Dataset2BertI3d
+from util.vatex_dataloader import Dataset2BertI3d, collate_data
 
 import logging
 import tensorboard_logger as tb_logger
@@ -161,12 +161,14 @@ def main():
                                     batch_size=opt.batch_size,
                                     shuffle=True,
                                     pin_memory=True,
-                                    num_workers=opt.workers)
+                                    num_workers=opt.workers,
+                                    collate_fn = collate_data)
     data_loaders_val = torch.utils.data.DataLoader(dataset=dset['val'],
                                     batch_size=opt.batch_size,
                                     shuffle=False,
                                     pin_memory=True,
-                                    num_workers=opt.workers)
+                                    num_workers=opt.workers,
+                                    collate_fn = collate_data)
                         
 
     # Construct the model
@@ -293,7 +295,7 @@ def train(opt, train_loader, model, epoch):
 
 def validate(opt, val_loader, model, measure='cosine'):
     # compute the encoding for all the validation video and captions
-    video_embs, cap_embs, video_ids, ch_caps = evaluation_vatex.encode_data(model, val_loader, opt.log_step, logging.info)
+    video_embs, cap_embs, video_ids = evaluation_vatex.encode_data(model, val_loader, opt.log_step, logging.info)
 
     # we load data as video-sentence pairs
     # but we only need to forward each video once for evaluation_vatex

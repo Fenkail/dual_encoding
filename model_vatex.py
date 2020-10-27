@@ -109,23 +109,29 @@ class Video_multilevel_encoding(nn.Module):
         """Extract video feature vectors."""
         
         # Level 1. Global Encoding by Mean Pooling According
-        mean_gru = Variable(torch.zeros(videos.size(0), videos.size(2))).cuda()
-        for i, batch in enumerate(videos):
-            mean_gru[i] = torch.mean(batch[:], 0)
-        org_out = mean_gru
+        # 处理平均 batch*x*2048--> batch*2048
+        videos, videos_origin, lengths, videos_mask = videos
+        if torch.cuda.is_available():
+            videos = videos.cuda()
+            videos_origin = videos_origin.cuda()
+            videos_mask = videos_mask.cuda()
+        
+        org_out = videos_origin
 
         # Level 2. Temporal-Aware Encoding by biGRU
-        # TODO 保留视频的长短特性
-        # packed = pack_padded_sequence(cap_wids, lengths, batch_first=True)
-        # gru_init_out, _ = self.rnn(packed)
+        # RNN : batch*x*2048 --> batch*x*2048
         gru_init_out, _ = self.rnn(videos)
         mean_gru = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
         for i, batch in enumerate(gru_init_out):
             mean_gru[i] = torch.mean(batch[:], 0)
         gru_out = mean_gru
+        # batch*2048
         gru_out = self.dropout(gru_out)
 
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        # batch*1*x*2048  -->  batch*
+        videos_mask = videos_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
+        gru_init_out = gru_init_out * videos_mask
         con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
@@ -188,22 +194,30 @@ class Text_multilevel_encoding(nn.Module):
         # Embed word ids to vectors
         # Level 1. Global Encoding by Mean Pooling According
         #TODO 为了判断文本为批量的均值输入（视频-mean（文本）） 和（视频-文本）  后面整合一下吧，768和10写这里太尬
-        if text.size()[1] == 768:
-            org_out = text
-            text = text.unsqueeze(1)
-        elif text.size()[1] == 10:
-            mean_gru = Variable(torch.zeros(text.size(0), text.size(2))).cuda()
-            for i, batch in enumerate(text):
-                mean_gru[i] = torch.mean(batch[:], 0)
-            org_out = mean_gru
+        # if text.size()[1] == 768:
+        #     org_out = text
+        #     text = text.unsqueeze(1)
+        # # elif text.size()[1] == 10:
+        text_origin, text_length, text_mask =  text
+        text_multi = torch.zeros(max(text_length), text_origin.size()[0], text_origin.size()[1])
+        for i in range(max(text_length)):
+            text_multi[i,:] = text_origin
+        text_multi = text_multi.permute(1,0,2)
+        if torch.cuda.is_available():
+            text_origin = text_origin.cuda()
+            text_mask = text_mask.cuda()
+            text_multi = text_multi.cuda()
+        org_out = text_origin
         # Level 2. Temporal-Aware Encoding by biGRU
-        gru_init_out, _ = self.rnn(text)
+        gru_init_out, _ = self.rnn(text_multi)
         # Reshape *final* output to (batch_size, hidden_size)
         gru_out = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
         for i, batch in enumerate(gru_init_out):
             gru_out[i] = torch.mean(batch[:], 0)
         gru_out = self.dropout(gru_out)
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        text_mask = text_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
+        gru_init_out = gru_init_out * text_mask
         con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
@@ -259,7 +273,7 @@ class BaseModel(object):
             self.logger.update('Le', loss.item(), vid_emb.size(0)) 
         return loss
 
-    def train_emb(self, videoId, cap_tensor, video_tensor, ch_cap, *args):
+    def train_emb(self, videoId, cap_tensor, video_tensor, *args):
         """One training step given videos and captions.
         """
         self.Eiters += 1
@@ -267,7 +281,7 @@ class BaseModel(object):
         self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
 
         # compute the embeddings
-        vid_emb, cap_emb = self.forward_emb(videoId, cap_tensor,video_tensor, ch_cap ,False)
+        vid_emb, cap_emb = self.forward_emb(videoId, cap_tensor,video_tensor ,False)
 
         # measure accuracy and record loss
         self.optimizer.zero_grad()
@@ -324,18 +338,9 @@ class Dual_Encoding(BaseModel):
         self.Eiters = 0
 
 
-    def forward_emb(self, videoId, cap_tensor,video_tensor, ch_cap , volatile=False, *args):
+    def forward_emb(self, videoId, cap_tensor,video_tensor, volatile=False, *args):
         """Compute the video and caption embeddings
         """
-        # video data
-
-        with torch.no_grad():
-            cap_tensor = Variable(cap_tensor)
-            video_tensor = Variable(video_tensor)
-        # 在cuda中运行   
-        if torch.cuda.is_available():
-            cap_tensor = cap_tensor.cuda()
-            video_tensor = video_tensor.cuda()
 
         vid_emb = self.vid_encoding(video_tensor)
         cap_emb = self.text_encoding(cap_tensor)

@@ -78,7 +78,7 @@ def parse_args():
     parser.add_argument('--workers', default=5, type=int, help='Number of data loader workers.')
     parser.add_argument('--postfix', default='runs_0', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
-    parser.add_argument('--cv_name', default='cvpr_2019', type=str, help='')
+    parser.add_argument('--cv_name', default='fengkai_yanzheng', type=str, help='')
 
     args = parser.parse_args()
     return args
@@ -88,7 +88,7 @@ def main():
     opt = parse_args()
     print(json.dumps(vars(opt), indent = 2))
 
-    rootpath = opt.rootpath
+    rootpath = os.path.join(opt.rootpath, 'msrvtt')
     trainCollection = opt.trainCollection
     valCollection = opt.valCollection
     testCollection = opt.testCollection

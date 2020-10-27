@@ -44,12 +44,12 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
     cap_embs = None
     videoIDs = set()
     ch_caps = []
-    for i, (videoId, cap_tensor, video_tensor, ch_cap) in enumerate(data_loader):
+    for i, (videoId, text_data, video_data) in enumerate(data_loader):
         # make sure val logger is used
         model.logger = val_logger
 
         # compute the embeddings
-        vid_emb, cap_emb = model.forward_emb(videoId, cap_tensor,video_tensor, ch_cap)
+        vid_emb, cap_emb = model.forward_emb(videoId, text_data, video_data)
 
         # initialize the numpy arrays given the size of the embeddings
         if video_embs is None:
@@ -62,7 +62,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
                 video_embs = np.vstack((video_embs, (vid_emb[index].data.cpu().numpy().copy())))
                 videoIDs.add(ID)
         cap_embs = np.vstack((cap_embs, (cap_emb.data.cpu().numpy().copy())))
-        ch_caps.append(ch_cap)
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -74,9 +74,9 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
                     .format(
                         i, len(data_loader), batch_time=batch_time,
                         e_log=str(model.logger)))
-        del video_tensor, cap_tensor, videoId, ch_cap
+        del video_data, text_data, videoId
     if return_ids == True:
-        return video_embs[1:], cap_embs[1:], list(videoIDs), ch_caps
+        return video_embs[1:], cap_embs[1:], list(videoIDs)
     else:
         return video_embs, cap_embs
 

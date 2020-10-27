@@ -17,10 +17,7 @@ import json
 import numpy as np
 
 import argparse
-from basic.util import read_dict
 from basic.constant import ROOT_PATH
-from basic.bigfile import BigFile
-from basic.common import makedirsforfile, checkToSkip
 
 def parse_args():
     # Hyper Parameters
@@ -30,8 +27,8 @@ def parse_args():
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
     parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
     parser.add_argument('--workers', default=5, type=int, help='Number of data loader workers.')
-    parser.add_argument('--logger_name', default='/home/fengkai/model/text_video_model', help='Path to save the model and Tensorboard log.')
-    parser.add_argument('--checkpoint_name', default='model_single_sentence.pth.tar', type=str, help='name of checkpoint (default: model_best.pth.tar)')
+    parser.add_argument('--logger_name', default='/home/fengkai/PycharmProjects/dual_encoding/result/fengkai_vatex_bert/dual_encoding_concate_full_dp_0.2_measure_cosine/vocab_word_vocab_5_word_dim_768_text_rnn_size_1024_text_norm_True_kernel_sizes_2-3-4_num_512/visual_feat_dim_1024_visual_rnn_size_1024_visual_norm_True_kernel_sizes_2-3-4-5_num_512/mapping_text_0-2048_img_0-2048/loss_func_mrl_margin_0.2_direction_all_max_violation_False_cost_style_sum/optimizer_adam_lr_0.0001_decay_0.99_grad_clip_2.0_val_metric_recall/runs_0', help='Path to save the model and Tensorboard log.')
+    parser.add_argument('--checkpoint_name', default='model_best.pth.tar', type=str, help='name of checkpoint (default: model_best.pth.tar)')
     parser.add_argument('--n_caption', type=int, default=1, help='number of captions of each image/video (default: 1)')
 
     args = parser.parse_args()
