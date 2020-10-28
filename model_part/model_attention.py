@@ -100,32 +100,36 @@ class Video_multilevel_encoding(nn.Module):
             'p_drop_attn':0.2,
             'n_heads':8,
             'dim_ff':1024,
-            'n_layers':3,
+            'n_layers':4,
         })
         #  mapping
-        self.mapping = MFC([1024,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.mapping = MFC([1024*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
         # pooling
 
 
 
     def forward(self, videos):
         """Extract video feature vectors."""
-        videos, videos_origin, lengths, videos_mask = videos
+        videos, videos_mean, lengths, videos_mask = videos
         if torch.cuda.is_available():
             videos = videos.cuda()
-            videos_origin = videos_origin.cuda()
+            videos_mean = videos_mean.cuda()
             videos_mask = videos_mask.cuda()
-        # Level 1. attention
+        # level 1. i3D平均特征 batch*1024
+        level1 = videos_mean
+        # Level 2. attention
         transformer_out_list = self.transformer(videos,videos_mask)
-        # batch*32*1024 --> batch*1*1024
         transformer_out = transformer_out_list[-1]
+        # batch*32*1024 --> batch*1*1024--> batch*1024
         pool = nn.MaxPool1d(32)
         transformer_out = transformer_out.permute(0,2,1)
-        feature = pool(transformer_out)
-        feature = feature.squeeze(2)
+        level2 = pool(transformer_out)
+        level2 = level2.squeeze(2)
 
-        # mapping to common space
-        features = self.mapping(feature)
+        # mapping
+        feature = torch.cat((level1, level2), 1)
+        feature = self.mapping(feature)
+
         if self.visual_norm:
             features = l2norm(feature)
 
@@ -165,10 +169,10 @@ class Text_multilevel_encoding(nn.Module):
             'p_drop_attn':0.2,
             'n_heads':8,
             'dim_ff':768,
-            'n_layers':3,
+            'n_layers':4,
         })
         #  mapping
-        self.mapping = MFC([768,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.mapping = MFC([768*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
 
 
 
@@ -181,17 +185,21 @@ class Text_multilevel_encoding(nn.Module):
 
         # Level 1. attention
         text_origin_t = text_origin.unsqueeze(1)
-        transformer_out_list = self.transformer(text_origin_t, None)
+        level1 = text_origin
         # Level 2. map
+        transformer_out_list = self.transformer(text_origin_t, None)
         transformer_out = transformer_out_list[-1]
-        feature = transformer_out.squeeze(1)
-        feature = self.mapping(feature)
+        level2 = transformer_out.squeeze(1)
+
+        # mapping
+        feature = torch.cat((level1, level2), 1)
+        features = self.mapping(feature)
 
         # concatenation
         # if self.concate == 'full': # level 1+2+3
         
         if self.text_norm:
-            features = l2norm(feature)
+            features = l2norm(features)
 
         return features
 

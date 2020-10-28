@@ -7,7 +7,7 @@ import sys
 import torch
 from util.vatex_dataloader import Dataset2BertI3d
 import evaluation_vatex
-from model_vatex import get_model
+from model_part.model_vatex import get_model
 import util.data_provider as data
 from util.vocab import Vocabulary
 from util.text2vec import get_text_encoder
@@ -15,7 +15,7 @@ from util.text2vec import get_text_encoder
 import logging
 import json
 import numpy as np
-
+from tensorboardX import SummaryWriter
 import argparse
 from basic.constant import ROOT_PATH
 
@@ -77,9 +77,14 @@ def main():
                                     shuffle=False,
                                     pin_memory=True,
                                     num_workers=opt.workers)
-    # mapping
     video_embs, cap_embs, video_ids, ch_caps = evaluation_vatex.encode_data(model, data_loaders_val, opt.log_step, logging.info)
-
+    #embedding 的可视化分析 
+    tensor_show = torch.cat((video_embs.data, torch.ones(len(video_embs), 1)), 1)
+    with SummaryWriter(log_dir='./results', comment='embedding——show') as writer: 
+            writer.add_embedding(
+                video_embs.data,
+                label_img=cap_embs.data,
+                global_step=1)
     c2i_all_errors = evaluation_vatex.cal_error(video_embs, cap_embs, options.measure)
 
      # caption retrieval
