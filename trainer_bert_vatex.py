@@ -13,7 +13,7 @@ import evaluation_vatex
 import util.data_provider as data
 from util.vocab import Vocabulary
 from util.text2vec import get_text_encoder
-from model_vatex import get_model
+from model_part.model_attention import get_model
 from util.vatex_dataloader import Dataset2BertI3d, collate_data
 
 import logging
@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument('--workers', default=6, type=int, help='Number of data loader workers.')
     parser.add_argument('--postfix', default='runs_0', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
-    parser.add_argument('--cv_name', default='fengkai_vatex_bert', type=str, help='')
+    parser.add_argument('--cv_name', default='fengkai_vatex_attention', type=str, help='')
 
     args = parser.parse_args()
     return args
@@ -347,10 +347,10 @@ def validate(opt, val_loader, model, measure='cosine'):
     if opt.direction == 't2i' or opt.direction == 'all':
         currscore += (r1i + r5i + r10i)
 
-    if opt.direction == 'i2t' or opt.direction == 'all':
-        currscore += i2t_map_score
-    if opt.direction == 't2i' or opt.direction == 'all':
-        currscore += t2i_map_score
+    # if opt.direction == 'i2t' or opt.direction == 'all':
+    #     currscore += i2t_map_score
+    # if opt.direction == 't2i' or opt.direction == 'all':
+    #     currscore += t2i_map_score
 
     tb_logger.log_value('rsum', currscore, step=model.Eiters)
 
