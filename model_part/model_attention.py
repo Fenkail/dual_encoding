@@ -102,8 +102,12 @@ class Video_multilevel_encoding(nn.Module):
             'dim_ff':1024,
             'n_layers':4,
         })
+        self.convs1 = nn.ModuleList([
+            nn.Conv2d(1, opt.visual_kernel_num, (window_size, 1024), padding=(window_size - 1, 0)) 
+            for window_size in opt.visual_kernel_sizes
+            ])
         #  mapping
-        self.mapping = MFC([1024*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.mapping = MFC([1024*4,1024], opt.dropout, have_bn=True, have_last_bn=True)
         # pooling
 
 
@@ -122,12 +126,22 @@ class Video_multilevel_encoding(nn.Module):
         transformer_out = transformer_out_list[-1]
         # batch*32*1024 --> batch*1*1024--> batch*1024
         pool = nn.MaxPool1d(32)
-        transformer_out = transformer_out.permute(0,2,1)
-        level2 = pool(transformer_out)
+        transformer_out_p = transformer_out.permute(0,2,1)
+        level2 = pool(transformer_out_p)
         level2 = level2.squeeze(2)
 
+        # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        # batch*1*x*1024  -->  batch*1024
+        videos_mask = videos_mask.unsqueeze(2).expand(-1,-1,transformer_out.size(2)) # (N,C,F1)
+        level3 = transformer_out * videos_mask
+        con_out = level3.unsqueeze(1)
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
+        con_out = torch.cat(con_out, 1)
+        level3 = self.dropout(con_out)
+
         # mapping
-        feature = torch.cat((level1, level2), 1)
+        feature = torch.cat((level1, level2, level3), 1)
         feature = self.mapping(feature)
 
         if self.visual_norm:
@@ -172,8 +186,12 @@ class Text_multilevel_encoding(nn.Module):
             'n_layers':4,
         })
         #  mapping
-        self.mapping = MFC([768*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.mapping = MFC([768*4,1024], opt.dropout, have_bn=True, have_last_bn=True)
 
+        self.convs1 = nn.ModuleList([
+            nn.Conv2d(1, opt.text_kernel_num, (window_size, 768), padding=(window_size - 1, 0)) 
+            for window_size in opt.text_kernel_sizes
+            ])
 
 
     def forward(self, text, *args):
@@ -186,13 +204,19 @@ class Text_multilevel_encoding(nn.Module):
         # Level 1. attention
         text_origin_t = text_origin.unsqueeze(1)
         level1 = text_origin
-        # Level 2. map
+        # Level 2. transformer
         transformer_out_list = self.transformer(text_origin_t, None)
         transformer_out = transformer_out_list[-1]
         level2 = transformer_out.squeeze(1)
+        # Level 3. conv
+        con_out = transformer_out.unsqueeze(1)
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
+        con_out = torch.cat(con_out, 1)
+        level3 = self.dropout(con_out)
 
         # mapping
-        feature = torch.cat((level1, level2), 1)
+        feature = torch.cat((level1, level2, level3), 1)
         features = self.mapping(feature)
 
         # concatenation
