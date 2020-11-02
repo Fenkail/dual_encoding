@@ -123,7 +123,7 @@ class Dataset4DualEncoding(data.Dataset):
         self.captions = {}
         self.cap_ids = []
         self.video_ids = set()
-        self.video2frames = video2frames
+        self.video2frames = video2frames 
         with open(cap_file, 'r') as cap_reader:
             for line in cap_reader.readlines():
                 cap_id, caption = line.strip().split(' ', 1)

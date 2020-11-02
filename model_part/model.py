@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from model_part.attention import Transformer
+
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -8,11 +8,28 @@ import torch.nn.functional as F
 import torch.nn.init
 import torchvision.models as models
 from torch.autograd import Variable
-from torch.nn.utils.clip_grad import clip_grad_norm  # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
+from torch.nn.utils.clip_grad import \
+    clip_grad_norm  # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-from model_part.loss import TripletLoss
+from basic.bigfile import BigFile
+from loss import TripletLoss
 
+
+def get_we_parameter(vocab, w2v_file):
+    w2v_reader = BigFile(w2v_file)
+    ndims = w2v_reader.ndims
+
+    we = []
+    # we.append([0]*ndims)
+    for i in range(len(vocab)):
+        try:
+            vec = w2v_reader.read_one(vocab.idx2word[i])
+        except:
+            vec = np.random.uniform(-1, 1, ndims)
+        we.append(vec)
+    print('getting pre-trained parameter for word embedding initialization', np.shape(we)) 
+    return np.array(we)
 
 def l2norm(X):
     """L2-normalize columns of X
@@ -92,60 +109,54 @@ class Video_multilevel_encoding(nn.Module):
         self.visual_norm = opt.visual_norm
         self.concate = opt.concate
 
-        # Transformer
-        self.transformer = Transformer({
-            'is_decoder':False,
-            'dim':2048,
-            'p_drop_hidden':0.2,
-            'p_drop_attn':0.2,
-            'n_heads':8,
-            'dim_ff':2048,
-            'n_layers':3,
-        })
+        # visual bidirectional rnn encoder
+        self.rnn = nn.GRU(opt.visual_feat_dim, opt.visual_rnn_size, batch_first=True, bidirectional=True)
+
+        # visual 1-d convolutional network
         self.convs1 = nn.ModuleList([
-            nn.Conv2d(1, opt.visual_kernel_num, (window_size, 2048), padding=(window_size - 1, 0)) 
+            nn.Conv2d(1, opt.visual_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0)) 
             for window_size in opt.visual_kernel_sizes
             ])
-        #  mapping
-        self.mapping1 = MFC([1024*6,1024*2], opt.dropout, have_bn=True, have_last_bn=True)
-        # pooling
 
+        # visual mapping
+        self.visual_mapping = MFC(opt.visual_mapping_layers, opt.dropout, have_bn=True, have_last_bn=True)
 
 
     def forward(self, videos):
         """Extract video feature vectors."""
-        videos, videos_mean, lengths, videos_mask = videos
-        if torch.cuda.is_available():
-            videos = videos.cuda()
-            videos_mean = videos_mean.cuda()
-            videos_mask = videos_mask.cuda()
-        # level 1. i3D平均特征 batch*1024
-        level1 = videos_mean
-        # Level 2. attention
-        transformer_out_list = self.transformer(videos, videos_mask)
-        transformer_out = transformer_out_list[-1]
-        # batch*32*1024 --> batch*1*1024--> batch*1024
-        pool = nn.MaxPool1d(transformer_out.size()[1])
-        transformer_out_p = transformer_out.permute(0,2,1)
-        level2 = pool(transformer_out_p)
-        level2 = level2.squeeze(2)
+
+        videos, videos_origin, lengths, vidoes_mask = videos
+        
+        # Level 1. Global Encoding by Mean Pooling According
+        org_out = videos_origin
+
+        # Level 2. Temporal-Aware Encoding by biGRU
+        gru_init_out, _ = self.rnn(videos)
+        mean_gru = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
+        for i, batch in enumerate(gru_init_out):
+            mean_gru[i] = torch.mean(batch[:lengths[i]], 0)
+        gru_out = mean_gru
+        gru_out = self.dropout(gru_out)
 
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
-        # batch*1*x*1024  -->  batch*1024
-        videos_mask = videos_mask.unsqueeze(2).expand(-1,-1,transformer_out.size(2)) # (N,C,F1)
-        level3 = transformer_out * videos_mask
-        con_out = level3.unsqueeze(1)
+        vidoes_mask = vidoes_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
+        gru_init_out = gru_init_out * vidoes_mask
+        con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
-        level3 = self.dropout(con_out)
+        con_out = self.dropout(con_out)
 
-        # mapping
-        feature = torch.cat((level1, level2, level3), 1)
-        feature = self.mapping1(feature)
+        # concatenation
+        if self.concate == 'full': # level 1+2+3
+            features = torch.cat((gru_out,con_out,org_out), 1)
+        elif self.concate == 'reduced':  # level 2+3
+            features = torch.cat((gru_out,con_out), 1)
 
+        # mapping to common space
+        features = self.visual_mapping(features)
         if self.visual_norm:
-            features = l2norm(feature)
+            features = l2norm(features)
 
         return features
 
@@ -171,57 +182,70 @@ class Text_multilevel_encoding(nn.Module):
         super(Text_multilevel_encoding, self).__init__()
         self.text_norm = opt.text_norm
         self.word_dim = opt.word_dim
+        self.we_parameter = opt.we_parameter
         self.rnn_output_size = opt.text_rnn_size*2
         self.dropout = nn.Dropout(p=opt.dropout)
         self.concate = opt.concate
         
-        # self-attention
-        self.transformer = Transformer({
-            'is_decoder':False,
-            'dim':768,
-            'p_drop_hidden':0.2,
-            'p_drop_attn':0.2,
-            'n_heads':8,
-            'dim_ff':768,
-            'n_layers':4,
-        })
-        #  mapping
-        self.mapping1 = MFC([768*4,1024*2], opt.dropout, have_bn=True, have_last_bn=True)
+        # visual bidirectional rnn encoder
+        self.embed = nn.Embedding(opt.vocab_size, opt.word_dim)
+        self.rnn = nn.GRU(opt.word_dim, opt.text_rnn_size, batch_first=True, bidirectional=True)
 
+        # visual 1-d convolutional network
         self.convs1 = nn.ModuleList([
-            nn.Conv2d(1, opt.text_kernel_num, (window_size, 768), padding=(window_size - 1, 0)) 
+            nn.Conv2d(1, opt.text_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0)) 
             for window_size in opt.text_kernel_sizes
             ])
+        
+        # multi fc layers
+        self.text_mapping = MFC(opt.text_mapping_layers, opt.dropout, have_bn=True, have_last_bn=True)
+
+        self.init_weights()
+
+    def init_weights(self):
+        if self.word_dim == 500 and self.we_parameter is not None:
+            self.embed.weight.data.copy_(torch.from_numpy(self.we_parameter))
+        else:
+            self.embed.weight.data.uniform_(-0.1, 0.1)
+
 
     def forward(self, text, *args):
         # Embed word ids to vectors
-        text_origin, text_length, text_mask =  text
-        if torch.cuda.is_available():
-            text_origin = text_origin.cuda()
-            text_mask = text_mask.cuda()
+        # cap_wids, cap_w2vs, cap_bows, cap_mask = x
+        cap_wids, cap_bows, lengths, cap_mask = text
 
-        # Level 1. attention  batch*768
-        text_origin_t = text_origin.unsqueeze(1)
-        level1 = text_origin
-        # Level 2. transformer  batch*1*768-->batch*1*768
-        transformer_out_list = self.transformer(text_origin_t, None)
-        transformer_out = transformer_out_list[-1]
-        level2 = transformer_out.squeeze(1)
-        # Level 3. conv batch*1*768-->batch*1*1*768-->batch*（2*768）
-        con_out = transformer_out.unsqueeze(1)
+        # Level 1. Global Encoding by Mean Pooling According
+        org_out = cap_bows
+
+        # Level 2. Temporal-Aware Encoding by biGRU
+        cap_wids = self.embed(cap_wids)
+        packed = pack_padded_sequence(cap_wids, lengths, batch_first=True)
+        gru_init_out, _ = self.rnn(packed)
+        # Reshape *final* output to (batch_size, hidden_size)
+        padded = pad_packed_sequence(gru_init_out, batch_first=True)
+        gru_init_out = padded[0]
+        gru_out = Variable(torch.zeros(padded[0].size(0), self.rnn_output_size)).cuda()
+        for i, batch in enumerate(padded[0]):
+            gru_out[i] = torch.mean(batch[:lengths[i]], 0)
+        gru_out = self.dropout(gru_out)
+
+        # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
-        level3 = self.dropout(con_out)
+        con_out = self.dropout(con_out)
 
-        # mapping
-        feature = torch.cat((level1, level2, level3), 1)
-        feature = self.mapping1(feature)
         # concatenation
-        # if self.concate == 'full': # level 1+2+3
+        if self.concate == 'full': # level 1+2+3
+            features = torch.cat((gru_out,con_out,org_out), 1)
+        elif self.concate == 'reduced': # level 2+3
+            features = torch.cat((gru_out,con_out), 1)
         
+        # mapping to common space
+        features = self.text_mapping(features)
         if self.text_norm:
-            features = l2norm(feature)
+            features = l2norm(features)
 
         return features
 
@@ -261,7 +285,7 @@ class BaseModel(object):
             self.logger.update('Le', loss.item(), vid_emb.size(0)) 
         return loss
 
-    def train_emb(self, videoId, cap_tensor, video_tensor, *args):
+    def train_emb(self, videos, captions, lengths, *args):
         """One training step given videos and captions.
         """
         self.Eiters += 1
@@ -269,7 +293,7 @@ class BaseModel(object):
         self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
 
         # compute the embeddings
-        vid_emb, cap_emb = self.forward_emb(videoId, cap_tensor,video_tensor ,False)
+        vid_emb, cap_emb = self.forward_emb(videos, captions, False)
 
         # measure accuracy and record loss
         self.optimizer.zero_grad()
@@ -304,7 +328,6 @@ class Dual_Encoding(BaseModel):
         if torch.cuda.is_available():
             self.vid_encoding.cuda()
             self.text_encoding.cuda()
-            # 输入数据在每次 iteration 都变化的话，会导致 cnDNN 每次都会去寻找一遍最优配置，这样反而会降低运行效率。
             cudnn.benchmark = True
 
         # Loss and Optimizer
@@ -327,13 +350,84 @@ class Dual_Encoding(BaseModel):
         self.Eiters = 0
 
 
-    def forward_emb(self, videoId, cap_tensor,video_tensor, volatile=False, *args):
+    def forward_emb(self, videos, targets, volatile=False, *args):
         """Compute the video and caption embeddings
         """
+        # video data
+        frames, mean_origin, video_lengths, vidoes_mask = videos
+        with torch.no_grad():
+            vidoes_mask = Variable(vidoes_mask)
+            frames = Variable(frames)
+            mean_origin = Variable(mean_origin)
+        # 在cuda中运行   
+        if torch.cuda.is_available():
+            frames = frames.cuda()
+            mean_origin = mean_origin.cuda()
+            vidoes_mask = vidoes_mask.cuda()
+        videos_data = (frames, mean_origin, video_lengths, vidoes_mask)
 
-        vid_emb = self.vid_encoding(video_tensor)
-        cap_emb = self.text_encoding(cap_tensor)
+        # text data
+        captions, cap_bows, lengths, cap_masks = targets
+        with torch.no_grad():
+            if captions is not None:
+                captions = Variable(captions)
+                
+            if cap_bows is not None:
+                cap_bows = Variable(cap_bows)
+        
+            if cap_masks is not None:
+                cap_masks = Variable(cap_masks)
+
+        if torch.cuda.is_available():
+            captions = captions.cuda()
+            cap_bows = cap_bows.cuda()
+            cap_masks = cap_masks.cuda()
+        text_data = (captions, cap_bows, lengths, cap_masks)
+
+
+        vid_emb = self.vid_encoding(videos_data)
+        cap_emb = self.text_encoding(text_data)
         return vid_emb, cap_emb
+
+    def embed_vis(self, vis_data, volatile=True):
+        # video data
+        frames, mean_origin, video_lengths, vidoes_mask = vis_data
+        frames = Variable(frames, volatile=volatile)
+        if torch.cuda.is_available():
+            frames = frames.cuda()
+
+        mean_origin = Variable(mean_origin, volatile=volatile)
+        if torch.cuda.is_available():
+            mean_origin = mean_origin.cuda()
+
+        vidoes_mask = Variable(vidoes_mask, volatile=volatile)
+        if torch.cuda.is_available():
+            vidoes_mask = vidoes_mask.cuda()
+        vis_data = (frames, mean_origin, video_lengths, vidoes_mask)
+
+        return self.vid_encoding(vis_data)
+
+
+    def embed_txt(self, txt_data, volatile=True):
+        # text data
+        captions, cap_bows, lengths, cap_masks = txt_data
+        if captions is not None:
+            captions = Variable(captions, volatile=volatile)
+            if torch.cuda.is_available():
+                captions = captions.cuda()
+
+        if cap_bows is not None:
+            cap_bows = Variable(cap_bows, volatile=volatile)
+            if torch.cuda.is_available():
+                cap_bows = cap_bows.cuda()
+
+        if cap_masks is not None:
+            cap_masks = Variable(cap_masks, volatile=volatile)
+            if torch.cuda.is_available():
+                cap_masks = cap_masks.cuda()
+        txt_data = (captions, cap_bows, lengths, cap_masks)
+
+        return self.text_encoding(txt_data)
 
 
 

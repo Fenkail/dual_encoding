@@ -14,7 +14,7 @@ import util.data_provider as data
 from util.vocab import Vocabulary
 from util.text2vec import get_text_encoder
 from model_part.model_attention import get_model
-from util.vatex_dataloader import Dataset2BertI3d, collate_data
+from util.msrvtt_dataloader import Dataset2BertRes, collate_data
 
 import logging
 import tensorboard_logger as tb_logger
@@ -33,13 +33,13 @@ def parse_args():
     # Hyper Parameters
     parser = argparse.ArgumentParser()
     parser.add_argument('--runpath', type=str, default='/home/fengkai/PycharmProjects/dual_encoding/result/')
-    parser.add_argument('--trainTextCollection', type=str, default='vatex/text_embed_info/train', help='train collection')
-    parser.add_argument('--valTextCollection', type=str, default='vatex/text_embed_info/val', help='validation collection')
-    parser.add_argument('--testTextCollection', type=str, default='vatex/text_embed_info/test',  help='test collection')
-    parser.add_argument('--trainVideoCollection', type=str, default='vatex/video_embed_info/train_video', help='train collection')
-    parser.add_argument('--valVideoCollection', type=str, default='vatex/video_embed_info/val_video', help='validation collection')
-    parser.add_argument('--testVideoCollection', type=str, default='vatex/video_embed_info/test_video',  help='test collection')
-    parser.add_argument('--n_caption', type=int, default=10, help='number of captions of each image/video (default: 1)')
+    parser.add_argument('--trainTextCollection', type=str, default='msrvtt/msrvtt10ktrain/TextData/bert_text', help='train collection')
+    parser.add_argument('--valTextCollection', type=str, default='msrvtt/msrvtt10kval/TextData/bert_text', help='validation collection')
+    parser.add_argument('--testTextCollection', type=str, default='msrvtt/msrvtt10ktest/TextData/bert_text',  help='test collection')
+    parser.add_argument('--trainVideoCollection', type=str, default='msrvtt/msrvtt10ktrain/FeatureData', help='train collection')
+    parser.add_argument('--valVideoCollection', type=str, default='msrvtt/msrvtt10kval/FeatureData', help='validation collection')
+    parser.add_argument('--testVideoCollection', type=str, default='msrvtt/msrvtt10ktest/FeatureData',  help='test collection')
+    parser.add_argument('--n_caption', type=int, default=20, help='number of captions of each image/video (default: 1)')
     parser.add_argument('--overwrite', type=int, default=0, choices=[0,1], help='overwrite existed file. (default: 0)')
     # model
     parser.add_argument('--model', type=str, default='dual_encoding', help='model name. (default: dual_encoding)')
@@ -77,11 +77,11 @@ def parse_args():
     parser.add_argument('--val_metric', default='recall', type=str, help='performance metric for validation (mir|recall)')
     # misc
     parser.add_argument('--num_epochs', default=50, type=int, help='Number of training epochs.')
-    parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
+    parser.add_argument('--batch_size', default=64, type=int, help='Size of a training mini-batch.')
     parser.add_argument('--workers', default=6, type=int, help='Number of data loader workers.')
-    parser.add_argument('--postfix', default='runs_0', help='Path to save the model and Tensorboard log.')
+    parser.add_argument('--postfix', default='msrvtt_attention_1', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
-    parser.add_argument('--cv_name', default='fengkai_vatex_mlp+attention3', type=str, help='')
+    parser.add_argument('--cv_name', default='fengkai_msrvtt', type=str, help='')
 
     args = parser.parse_args()
     return args
@@ -154,9 +154,16 @@ def main():
         opt.visual_mapping_layers[0] = opt.visual_rnn_size*2 + opt.visual_kernel_num * len(opt.visual_kernel_sizes)
     else:
         raise NotImplementedError('Model %s not implemented'%opt.model)
-    # set data loader
-    dset = {'train': Dataset2BertI3d(caption_files['train_text'], visual_feat_path['train_video'],videoEmbed_num = 32),
-            'val': Dataset2BertI3d(caption_files['val_text'], visual_feat_path['val_video'], videoEmbed_num = 32) }
+    # set data loader 
+
+    visual_feat_train = BigFile(visual_feat_path['train_video'])
+    visual_feat_val = BigFile(visual_feat_path['val_video']) 
+    video_frames_train = read_dict(os.path.join(visual_feat_path['train_video'], 'video2frames.txt')) 
+    video_frames_val = read_dict(os.path.join(visual_feat_path['val_video'], 'video2frames.txt')) 
+
+    dset = {'train': Dataset2BertRes(caption_files['train_text'], visual_feat_train, video_frames_train, videoEmbed_num = 32),
+            'val': Dataset2BertRes(caption_files['val_text'], visual_feat_val, video_frames_val, videoEmbed_num = 32) }
+    #TODO 到这里了
     data_loaders_train = torch.utils.data.DataLoader(dataset=dset['train'],
                                     batch_size=opt.batch_size,
                                     shuffle=True,
