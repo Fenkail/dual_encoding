@@ -8,13 +8,14 @@ import torch
 import ijson
 import torch.nn as nn
 from tqdm import tqdm
-'''
-1. 对中文文本和视频进行预处理的--一一对应
-2. 中文信息分词，提取bert向量（降维？）
-3. 输入训练模型
-'''
+
 
 class text_embed:
+    '''
+    1. 对中文文本和视频进行预处理的--一一对应
+    2. 中文信息分词，提取bert向量（降维？）
+    3. 输入训练模型
+    '''
     def __init__(self, language = None):
         if language == 'Chinese':
             self.tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
