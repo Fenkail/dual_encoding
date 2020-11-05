@@ -9,8 +9,7 @@ import torchvision.models as models
 from torch.autograd import Variable
 from torch.nn.utils.clip_grad import clip_grad_norm  # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
-from loss import TripletLoss
+from model_part.loss import TripletLoss
 
 
 def l2norm(X):
@@ -101,7 +100,7 @@ class Video_multilevel_encoding(nn.Module):
             ])
 
         # visual mapping
-        self.visual_mapping = MFC(opt.visual_mapping_layers, opt.dropout, have_bn=True, have_last_bn=True)
+        self.visual_mapping = MFC([1024+2048+2048,2048], opt.dropout, have_bn=True, have_last_bn=True)
 
 
     def forward(self, videos):
@@ -109,13 +108,13 @@ class Video_multilevel_encoding(nn.Module):
         
         # Level 1. Global Encoding by Mean Pooling According
         # 处理平均 batch*x*2048--> batch*2048
-        videos, videos_origin, lengths, videos_mask = videos
+        videos, videos_mean, videos_mask = videos
         if torch.cuda.is_available():
             videos = videos.cuda()
-            videos_origin = videos_origin.cuda()
+            videos_mean = videos_mean.cuda()
             videos_mask = videos_mask.cuda()
-        
-        org_out = videos_origin
+
+        level1 = videos_mean
 
         # Level 2. Temporal-Aware Encoding by biGRU
         # RNN : batch*x*2048 --> batch*x*2048
@@ -125,7 +124,7 @@ class Video_multilevel_encoding(nn.Module):
             mean_gru[i] = torch.mean(batch[:], 0)
         gru_out = mean_gru
         # batch*2048
-        gru_out = self.dropout(gru_out)
+        level2 = self.dropout(gru_out)
 
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
         # batch*1*x*2048  -->  batch*
@@ -135,13 +134,10 @@ class Video_multilevel_encoding(nn.Module):
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
-        con_out = self.dropout(con_out)
+        level3 = self.dropout(con_out)
 
         # concatenation
-        if self.concate == 'full': # level 1+2+3
-            features = torch.cat((gru_out,con_out,org_out), 1)
-        elif self.concate == 'reduced':  # level 2+3
-            features = torch.cat((gru_out,con_out), 1)
+        features = torch.cat((level1, level2, level3), 1)
 
         # mapping to common space
         features = self.visual_mapping(features)
@@ -186,30 +182,29 @@ class Text_multilevel_encoding(nn.Module):
             ])
         
         # multi fc layers
-        self.text_mapping = MFC(opt.text_mapping_layers, opt.dropout, have_bn=True, have_last_bn=True)
+        self.text_mapping = MFC([768+1024+1536,2048], opt.dropout, have_bn=True, have_last_bn=True)
 
 
     def forward(self, text, *args):
         # Embed word ids to vectors
         # Level 1. Global Encoding by Mean Pooling According
         #TODO 为了判断文本为批量的均值输入（视频-mean（文本）） 和（视频-文本）  后面整合一下吧，768和10写这里太尬
-        # if text.size()[1] == 768:
-        #     org_out = text
-        #     text = text.unsqueeze(1)
-        # # elif text.size()[1] == 10:
-        text_origin, text_length, text_mask =  text
+        # 没有mask  mean就是texts
+        texts, texts_mean, texts_mask = text
         if torch.cuda.is_available():
-            text_origin = text_origin.cuda()
-            text_mask = text_mask.cuda()
-        org_out = text_origin
+            texts = texts.cuda()
+            texts_mean = texts_mean.cuda()
+
+        # Level 1. attention  batch*768
+        level1 = texts_mean
         # Level 2. Temporal-Aware Encoding by biGRU
-        text_multi = text_origin.unsqueeze(1)
+        text_multi = texts.unsqueeze(1)
         gru_init_out, _ = self.rnn(text_multi)
         # Reshape *final* output to (batch_size, hidden_size)
         gru_out = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
         for i, batch in enumerate(gru_init_out):
             gru_out[i] = torch.mean(batch[:], 0)
-        gru_out = self.dropout(gru_out)
+        level2 = self.dropout(gru_out)
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
         # text_mask = text_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
         # gru_init_out = gru_init_out * text_mask
@@ -217,13 +212,10 @@ class Text_multilevel_encoding(nn.Module):
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
-        con_out = self.dropout(con_out)
+        level3 = self.dropout(con_out)
 
         # concatenation
-        if self.concate == 'full': # level 1+2+3
-            features = torch.cat((gru_out,con_out,org_out), 1)
-        elif self.concate == 'reduced': # level 2+3
-            features = torch.cat((gru_out,con_out), 1)
+        features = torch.cat((level1, level2, level3), 1)
         
         # mapping to common space
         features = self.text_mapping(features)
