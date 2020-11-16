@@ -11,8 +11,10 @@ import torch
 
 import evaluation_vatex
 import util.data_provider as data
-from model_part.model_vatex import get_model
-from util.vatex_dataloader import Dataset2BertI3d, collate_data
+from util.vocab import Vocabulary
+from util.text2vec import get_text_encoder
+from model_part.model_vatex_fine import get_model
+from util.vatex_dataloader_fine import Dataset2BertI3d, collate_data
 
 import logging
 import tensorboard_logger as tb_logger
@@ -47,7 +49,7 @@ def parse_args():
     # text-side multi-level encoding
     parser.add_argument('--vocab', type=str, default='word_vocab_5', help='word vocabulary. (default: word_vocab_5)')
     parser.add_argument('--word_dim', type=int, default=768, help='word embedding dimension')
-    parser.add_argument('--text_rnn_size', type=int, default=512, help='text rnn encoder size. (default: 1024)')
+    parser.add_argument('--text_rnn_size', type=int, default=1024, help='text rnn encoder size. (default: 1024)')
     parser.add_argument('--text_kernel_num', default=512, type=int, help='number of each kind of text kernel')
     parser.add_argument('--text_kernel_sizes', default='2-3-4', type=str, help='dash-separated kernel size to use for text convolution')
     parser.add_argument('--text_norm', action='store_false', help='normalize the text embeddings at last layer')
@@ -76,19 +78,16 @@ def parse_args():
     # misc
     parser.add_argument('--num_epochs', default=100, type=int, help='Number of training epochs.')
     parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
-    parser.add_argument('--workers', default=6, type=int, help='Number of data loader workers.')
-    parser.add_argument('--postfix', default='runs_22_5th', help='Path to save the model and Tensorboard log.')
+    parser.add_argument('--workers', default=4, type=int, help='Number of data loader workers.')
+    parser.add_argument('--postfix', default='runs_26_full_liner+new', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
-    parser.add_argument('--cv_name', default='fengkai_vatex_attention', type=str, help='')
+    parser.add_argument('--cv_name', default='fengkai_vatex_fine_16', type=str, help='')
 
     args = parser.parse_args()
     return args
 
 
 def main():
-    '''
-    视觉特征使用I3d，文本特征使用原本文章的方法构建
-    '''
     opt = parse_args()
     print(json.dumps(vars(opt), indent = 2))
 
@@ -144,17 +143,6 @@ def main():
     # Load visual features
     visual_feat_path = {x: os.path.join(rootpath, collections_video[x])for x in collections_video }
 
-    # mapping layer structure
-    opt.text_mapping_layers = list(map(int, opt.text_mapping_layers.split('-')))
-    opt.visual_mapping_layers = list(map(int, opt.visual_mapping_layers.split('-')))
-    if opt.concate == 'full':
-        opt.text_mapping_layers[0] =  opt.word_dim +opt.text_rnn_size*2 + opt.text_kernel_num * len(opt.text_kernel_sizes) 
-        opt.visual_mapping_layers[0] = opt.visual_feat_dim + opt.visual_rnn_size*2 + opt.visual_kernel_num * len(opt.visual_kernel_sizes)
-    elif opt.concate == 'reduced':
-        opt.text_mapping_layers[0] = opt.text_rnn_size*2 + opt.text_kernel_num * len(opt.text_kernel_sizes) 
-        opt.visual_mapping_layers[0] = opt.visual_rnn_size*2 + opt.visual_kernel_num * len(opt.visual_kernel_sizes)
-    else:
-        raise NotImplementedError('Model %s not implemented'%opt.model)
     # set data loader
     dset = {'train': Dataset2BertI3d(caption_files['train_text'], visual_feat_path['train_video'],videoEmbed_num = 32),
             'val': Dataset2BertI3d(caption_files['val_text'], visual_feat_path['val_video'], videoEmbed_num = 32) }
@@ -189,6 +177,11 @@ def main():
             model.Eiters = checkpoint['Eiters']
             print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
                   .format(opt.resume, start_epoch, best_rsum))
+            #TODO 继续训练的dataloader
+            # if testCollection.startswith('msvd'):
+            #     validate_split(opt, val_vid_data_loader, val_text_data_loader, model, measure=opt.measure)
+            # else:
+            #     validate(opt, data_loaders['val'], model, measure=opt.measure)
         else:
             print("=> no checkpoint found at '{}'".format(opt.resume))
 

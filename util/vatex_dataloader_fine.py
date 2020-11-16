@@ -5,7 +5,11 @@ import numpy as np
 from tqdm import tqdm
 import json
 import random
-
+from multiprocessing import set_start_method
+try:
+    set_start_method('spawn')
+except RuntimeError:
+    pass
 
 class Dataset2BertI3d(data.Dataset):
     """
@@ -25,15 +29,18 @@ class Dataset2BertI3d(data.Dataset):
             text_id = caption[:-4]
             self.length += 1
             self.data.append((video_id, text_id))
-  
 
     def __getitem__(self, index):
         video_id, text_id = self.data[index]
-        text_embeds_multi = np.load(os.path.join(self.cap_file_path, text_id+'.npz'), allow_pickle=True)
+        assert video_id == text_id
+        text_data = np.load(os.path.join(self.cap_file_path, text_id+'.npz'), allow_pickle=True)
+        text_embeds = text_data['word_embed']
+        text_stence_embeds = text_data['setence_embed']
         video_embed = (np.load(os.path.join(self.visual_file_path, video_id+'.npy')))[0]
-        text_tensor = torch.tensor(text_embeds_multi['setence_embed'])
+        text_tensor = torch.tensor(text_embeds)
         video_tensor = torch.tensor(video_embed)
-        return video_id, text_id, text_tensor, video_tensor
+        text_stence_embeds = torch.tensor(text_stence_embeds)
+        return video_id, text_tensor, video_tensor, text_stence_embeds
 
     def __len__(self):
         return self.length
@@ -57,8 +64,9 @@ def collate_data(data):
     Build mini-batch tensors from a list of (video, caption) tuples.
     """
     # Sort a data list by caption length
-    video_id, text_v_id, text_tensor, video_tensor = zip(*data)
-    assert video_id == text_v_id
+
+    # 最长为64个I3D  video数据加载的预处理  dataloader只能加载方阵
+    video_id, text_tensor, video_tensor, text_stence_embeds = zip(*data)
     video_lengths = [min(64, len(frame)) for frame in video_tensor]
     video_tensor_dim = len(video_tensor[0][0])
     # batch*i3d数目*1024
@@ -70,21 +78,22 @@ def collate_data(data):
             end = video_lengths[i]
             vidoes[i, :end, :] = frames[:end, :]
             videos_mean[i, :] = torch.mean(frames, 0)
-            # vidoes_mask[i, :end] = 1.0
-
-    video_data = (videos_mean, videos_mean, vidoes_mask)
+            vidoes_mask[i, :end] = 1.0
+    video_lengths = torch.tensor(np.array(video_lengths))
+    video_data = (vidoes, videos_mean, vidoes_mask, video_lengths)
 
     # 文本数据的处理
-
     text_lengths = [min(32, len(token)) for token in text_tensor]
+    cap_tensor_dim = len(text_tensor[0][0])
+    text = torch.zeros(len(text_tensor), max(text_lengths), cap_tensor_dim)
     texts_mask = torch.zeros(len(text_tensor), max(text_lengths))
-    cap_tensor_dim = len(text_tensor[0])
-    texts_mean = torch.zeros(len(text_tensor), cap_tensor_dim)
+    text_stence = torch.zeros(len(text_tensor), cap_tensor_dim)
     for i, batch in enumerate(text_tensor):
-        end = video_lengths[i]
-        texts_mean[i,:] = batch[:]
-        vidoes_mask[i, :end] = 1.0
-    text = texts_mean
-    text_data = (text, texts_mean, texts_mask)
+        end = text_lengths[i]
+        text[i, :end, :] = batch[:end, :]
+        texts_mask[i, :end] = 1.0
+        text_stence[i,:] = text_stence_embeds[i]
+    text_lengths = torch.tensor(np.array(text_lengths))
+    text_data = (text, text_stence, texts_mask, text_lengths)
 
     return video_id, text_data, video_data

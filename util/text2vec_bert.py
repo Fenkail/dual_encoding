@@ -2,12 +2,23 @@ import bert_pytorch
 import numpy as np
 import sys,os
 import json
-from pytorch_transformers import  BertModel, BertConfig,BertTokenizer
 from transformers import AutoTokenizer, AutoModel
 import torch
 import ijson
 import torch.nn as nn
 from tqdm import tqdm
+import random
+from multiprocessing import set_start_method
+from jieba_pos import PartOfSpeech
+
+try:
+    set_start_method('spawn')
+except RuntimeError:
+    pass
+
+
+part_list = ['v','vd','vn','n','nz','nt']
+part_list_back = ['a','ad','an','d','i','l','s']
 
 
 class text_embed:
@@ -18,8 +29,8 @@ class text_embed:
     '''
     def __init__(self, language = None):
         if language == 'Chinese':
-            self.tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
-            self.bert = BertModel.from_pretrained('bert-base-chinese').cuda()
+            self.tokenizer = AutoTokenizer.from_pretrained('bert-base-chinese')
+            self.bert = AutoModel.from_pretrained('bert-base-chinese').cuda()
         elif language == "English":
             # bert-base-uncased means english == English
             self.tokenizer =  AutoTokenizer.from_pretrained('bert-base-uncased')
@@ -60,10 +71,8 @@ class text_embed:
         with torch.no_grad():
             features = self.bert(tokens_tensor, input_masks_tensors, segments_tensors)
             # 每一个token有一个维度的特征，batch*token_max_len*768，特征的第二个维度上为batch*768
-            text_embed = features[1]
-        
-        return text_embed.cpu().numpy().tolist()
-
+            embed_out = [features[0].cpu().numpy(), features[1].cpu().numpy()]
+        return embed_out
 
     def process_en(self, texts):
     # 加载分词，处理文本
@@ -96,50 +105,51 @@ class text_embed:
         with torch.no_grad():
             features = self.bert(tokens_tensor, input_masks_tensors, segments_tensors)
             # 每一个token有一个维度的特征，batch*token_max_len*768，特征的第二个维度上为batch*768
-            text_embed = features[1]
+            embed = features[1]
         
-        return text_embed.cpu().numpy().tolist()
+        return embed.cpu().numpy()
 
     def save_embeds(self, path_dir, da_js):
-        path = os.path.join(path_dir, 'bert_text/')
-        videoID = da_js.get('videoID','')
-        with open(path+videoID+'.txt','w') as w:
+        with open(path_dir+'.txt','w') as w:
             data = json.dumps(da_js , ensure_ascii=False)
             w.writelines(data)
 
-def vatex_process():
 
+    def save_embeds_ndarray(self, path_dir, features):
+        word_embed, setence_embed, ch_pos = features
+        np.savez(path_dir+'.npz', 
+                    word_embed=word_embed, setence_embed=setence_embed, 
+                    text_pos = ch_pos)
+
+def vatex_process():
     with open('/home/fengkai/dataset/vatex/vatex_training_v1.0.json', 'r') as r:
         rr = r.readlines()
         line = rr[0]
         # line = line.split( ' {"videoID": ')
         da_js = json.loads(line)
+    text_processer = text_embed('Chinese')
+    path_dir = '/home/fengkai/dataset/vatex/text_embed_info/train_mean_multi_np'
+    for video_txt_info in tqdm(da_js):
+        info = {}
+        videoID = video_txt_info.get('videoID','')
+        ch_caps = video_txt_info.get('chCap','')
+        # ch_embeds = []
+        # for key ,ch_cap in enumerate(ch_caps):
+        ch_caps = [ch_caps[4]]
+        ch_pos = PartOfSpeech(ch_caps)
+        features = text_processer.process_ch(ch_caps)
+        word_embed = features[0][0]
+        setence_embed = features[1][0]
+        path_dir_id = os.path.join(path_dir, videoID)
+        data = (word_embed, setence_embed, ch_pos)
+        # for index, chembed in enumerate(ch_embeds):
+            # path_dir_out = path_dir_id+'_'+str(index)
+            # text_processer.save_embeds_ndarray(path_dir_out, chembed)
+        # ch_mean_embeds = np.mean(ch_embeds, axis=0)
+        text_processer.save_embeds_ndarray(path_dir_id, data)
 
-    text_processer = text_embed()
-    text_language = 'Chinese'
-    if text_language == 'English':
-        for video_txt_info in da_js:
-            videoID = video_txt_info.get('videoID','')
-            en_caps = video_txt_info.get('enCap','')
-            en_embeds = []
-            for en_cap in en_caps:
-                en_embed = process_en(en_cap)
-                en_embeds.append(en_embed)
-            video_txt_info['enEmebd'] = en_embeds
-    elif text_language == 'Chinese':
-        for video_txt_info in tqdm(da_js):
-            videoID = video_txt_info.get('videoID','')
-            ch_caps = video_txt_info.get('chCap','')
-            ch_embeds = []
-            for key ,ch_cap in enumerate(ch_caps):
-                ch_caps[key] = "[CLS] "+ch_cap+" [SEP]"
-            ch_embeds = text_processer.process_ch(ch_caps)
-            ## 向量str化
-            # for key, ch_embed in  enumerate(ch_embeds):
-            video_txt_info['chEmbed'] = ch_embeds
-            text_processer.save_embeds(video_txt_info)
 
-if __name__ == "__main__":
+def msrvtt_process():
     path = {x:'/home/fengkai/dataset/msrvtt/msrvtt10k'+x+'/TextData/'+'msrvtt10k'+x+'.caption.txt' for x in ['val', 'test']}
     path_dir =  {x:'/home/fengkai/dataset/msrvtt/msrvtt10k'+x+'/TextData/' for x in ['val', 'test']}
     for key, path_value in path.items():
@@ -172,6 +182,99 @@ if __name__ == "__main__":
                 embed = text_processer.process_en(v["Text"])
                 info[k]['Embed'] = embed
                 text_processer.save_embeds(path_dir[key],v)
+
+
+def pos_embed(embeddings_index, words, word_parts):
+    """
+    docstring
+    """
+    word_tem,text_part = [],[]
+    for word, part in zip(words, word_parts):
+        if part in part_list:
+            word_tem.append(word)
+            text_part.append(part)
+    text_part_outs = []
+    embed_part_outs = []
+    for word, part in zip(word_tem,text_part):
+        if word in embeddings_index:
+            word_vector = embeddings_index[word]
+            text_part_outs.append(word+' '+part)
+            embed_part_outs.append(word_vector)
+    if len(text_part_outs) < 2:
+        for word, part in zip(words, word_parts):
+            if part in part_list_back:
+                word_tem.append(word)
+                text_part.append(part)
+        for word, part in zip(word_tem,text_part):
+            if word in embeddings_index:
+                word_vector = embeddings_index[word]
+                text_part_outs.append(word+' '+part)
+                embed_part_outs.append(word_vector)
+    if len(text_part_outs) < 2:
+        for word, part in zip(words, word_parts):
+            word_tem.append(word)
+            text_part.append(part)
+        for word, part in zip(word_tem,text_part):
+            if word in embeddings_index:
+                word_vector = embeddings_index[word]
+                text_part_outs.append(word+' '+part)
+                embed_part_outs.append(word_vector)
+    text_part_outs = np.array(text_part_outs[:2])
+    embed_part_outs = np.array(embed_part_outs[:2])
+    
+    return text_part_outs, embed_part_outs
+
+
+def word2vector() -> dict:
+    """
+    加载词向量的模型
+    return 
+    """
+    path = '/home/fengkai/model/word2vector_chinese'
+    r = open(path, 'r', encoding='utf-8')
+    line = r.readline()
+    # word_num, word_dim = map(int, line.split())
+    embeddings_index = {}
+    lines = r.readlines()
+    for data in tqdm(lines):
+        data_list = data.strip().split(' ')
+        word = data_list[0].strip()
+        embeddings_index[word] = np.asarray(data_list[1:], dtype='float32')
+    return embeddings_index
+
+
+def word_pipeline():
+    wrong = 0
+    with open('/home/fengkai/dataset/vatex/vatex_training_v1.0.json', 'r') as r:
+        rr = r.readlines()
+        line = rr[0]
+        # line = line.split( ' {"videoID": ')
+        da_js = json.loads(line)
+    path_dir = '/home/fengkai/dataset/vatex/text_embed_info/train_wordvector_pos'
+    embeddings_index = word2vector()
+    for video_txt_info in tqdm(da_js):
+        videoID = video_txt_info.get('videoID','')
+        ch_caps = video_txt_info.get('chCap','')
+        ch_caps = [ch_caps[4]]
+        words, flags = PartOfSpeech(ch_caps)
+        path_dir_id = os.path.join(path_dir, videoID)
+        text_part_outs, embed_part_outs = pos_embed(embeddings_index, words, flags)
+        if len(text_part_outs) != 2:
+            wrong += 1
+            print(videoID)
+            print(ch_caps)
+            print(text_part_outs)
+            print(embed_part_outs)
+        np.savez(path_dir_id+'.npz', 
+                    text_part_outs=text_part_outs,
+                     embed_part_outs=embed_part_outs)
+    print('不满两个词向量的共这么多：')
+    print(wrong)
+
+
+if __name__ == "__main__":
+    word_pipeline()
+
                     
             
 

@@ -112,24 +112,23 @@ class Video_multilevel_encoding(nn.Module):
         if torch.cuda.is_available():
             videos = videos.cuda()
             videos_mean = videos_mean.cuda()
-            videos_mask = videos_mask.cuda()
+            # videos_mask = videos_mask.cuda()
 
         level1 = videos_mean
 
         # Level 2. Temporal-Aware Encoding by biGRU
         # RNN : batch*x*2048 --> batch*x*2048
-        gru_init_out, _ = self.rnn(videos)
-        mean_gru = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
-        for i, batch in enumerate(gru_init_out):
-            mean_gru[i] = torch.mean(batch[:], 0)
-        gru_out = mean_gru
+        videos_multi = videos.unsqueeze(1)
+        gru_init_out, _ = self.rnn(videos_multi)
+        
         # batch*2048
+        level2 = self.dropout(gru_init_out)
+        gru_out = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
+        for i, batch in enumerate(gru_init_out):
+            gru_out[i] = torch.mean(batch[:], 0)
         level2 = self.dropout(gru_out)
-
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
         # batch*1*x*2048  -->  batch*
-        videos_mask = videos_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
-        gru_init_out = gru_init_out * videos_mask
         con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]

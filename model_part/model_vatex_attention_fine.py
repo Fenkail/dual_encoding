@@ -1,5 +1,4 @@
 from collections import OrderedDict
-from model_part.attention import Transformer
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -10,8 +9,8 @@ import torchvision.models as models
 from torch.autograd import Variable
 from torch.nn.utils.clip_grad import clip_grad_norm  # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
 from model_part.loss import TripletLoss
+from model_part.attention import MultiHeadedSelfAttention
 
 
 def l2norm(X):
@@ -92,60 +91,67 @@ class Video_multilevel_encoding(nn.Module):
         self.visual_norm = opt.visual_norm
         self.concate = opt.concate
 
-        # Transformer
-        self.transformer = Transformer({
-            'is_decoder':False,
-            'dim':1024,
-            'p_drop_hidden':0.2,
-            'p_drop_attn':0.2,
-            'n_heads':8,
-            'dim_ff':1024,
-            'n_layers':4,
-        })
+        # visual bidirectional rnn encoder
+        self.rnn = nn.GRU(opt.visual_feat_dim, opt.visual_rnn_size, batch_first=True, bidirectional=True)
+
+        # visual 1-d convolutional network
         self.convs1 = nn.ModuleList([
-            nn.Conv2d(1, opt.visual_kernel_num, (window_size, 1024), padding=(window_size - 1, 0)) 
+            nn.Conv2d(1, opt.visual_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0)) 
             for window_size in opt.visual_kernel_sizes
             ])
-        #  mapping
-        self.mapping1 = MFC([1024*4,1024], opt.dropout, have_bn=True, have_last_bn=True)
-        # pooling
 
-
-
+        # visual mapping
+        self.visual_mapping = MFC([1024+2048+2048,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.attention = MultiHeadedSelfAttention({
+            'dim': 2048,
+            'p_drop_attn':0.2,
+            'n_heads':8
+        })
+        
     def forward(self, videos):
         """Extract video feature vectors."""
+        
+        # Level 1. Global Encoding by Mean Pooling According
+        # 处理平均 batch*x*2048--> batch*2048
         videos, videos_mean, videos_mask = videos
         if torch.cuda.is_available():
             videos = videos.cuda()
             videos_mean = videos_mean.cuda()
             videos_mask = videos_mask.cuda()
-        # level 1. i3D平均特征 batch*1024
+
         level1 = videos_mean
-        # Level 2. attention
-        transformer_out_list = self.transformer(videos, videos_mask)
-        transformer_out = transformer_out_list[-1]
-        # batch*32*1024 --> batch*1*1024--> batch*1024
-        pool = nn.MaxPool1d(transformer_out.size()[1])
-        transformer_out_p = transformer_out.permute(0,2,1)
-        level2 = pool(transformer_out_p)
-        level2 = level2.squeeze(2)
+
+        # Level 2. Temporal-Aware Encoding by biGRU
+        # RNN : batch*x*2048 --> batch*x*2048
+        gru_init_out, _ = self.rnn(videos)
+        # gru_init_out = self.attention(gru_init_out, None)
+        mean_gru = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
+        for i, batch in enumerate(gru_init_out):
+            mean_gru[i] = torch.mean(batch[:], 0)
+        gru_out = mean_gru
+        # batch*2048
+        level2 = self.dropout(gru_out)
 
         # Level 3. Local-Enhanced Encoding by biGRU-CNN
-        # batch*1*x*1024  -->  batch*1024
-        videos_mask = videos_mask.unsqueeze(2).expand(-1,-1,transformer_out.size(2)) # (N,C,F1)
-        level3 = transformer_out * videos_mask
-        con_out = level3.unsqueeze(1)
+        # batch*1*x*2048  -->  batch*
+        videos_mask_con = videos_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
+        gru_init_out = gru_init_out * videos_mask_con
+        # level4
+        con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
         level3 = self.dropout(con_out)
 
-        # mapping
-        feature = torch.cat((level1, level2, level3), 1)
-        feature = self.mapping1(feature)
 
+        # concatenation
+        features = torch.cat((level1, level2, level3), 1)
+        # features = torch.cat((level1, level2), 1)
+        
+        # mapping to common space
+        features = self.visual_mapping(features)
         if self.visual_norm:
-            features = l2norm(feature)
+            features = l2norm(features)
 
         return features
 
@@ -175,27 +181,25 @@ class Text_multilevel_encoding(nn.Module):
         self.dropout = nn.Dropout(p=opt.dropout)
         self.concate = opt.concate
         
-        # self-attention
-        self.transformer = Transformer({
-            'is_decoder':False,
-            'dim':768,
-            'p_drop_hidden':0.2,
-            'p_drop_attn':0.2,
-            'n_heads':8,
-            'dim_ff':768,
-            'n_layers':4,
-        })
-        #  mapping
-        self.mapping1 = MFC([768*4,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        # visual bidirectional rnn encoder
+        self.rnn = nn.GRU(opt.word_dim, opt.text_rnn_size, batch_first=True, bidirectional=True)
 
+        # visual 1-d convolutional network
         self.convs1 = nn.ModuleList([
-            nn.Conv2d(1, opt.text_kernel_num, (window_size, 768), padding=(window_size - 1, 0)) 
+            nn.Conv2d(1, opt.text_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0)) 
             for window_size in opt.text_kernel_sizes
             ])
+        
+        # multi fc layers
+        self.text_mapping = MFC([768+2048+768*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.attention = MultiHeadedSelfAttention({
+            'dim': 2048,
+            'p_drop_attn':0.2,
+            'n_heads':8
+        })
 
     def forward(self, text, *args):
         # Embed word ids to vectors
-        # text_origin, text_length, text_mask =  text
         texts, texts_mean, texts_mask = text
         if torch.cuda.is_available():
             texts = texts.cuda()
@@ -204,28 +208,34 @@ class Text_multilevel_encoding(nn.Module):
 
         # Level 1. attention  batch*768
         level1 = texts_mean
-        # Level 2. transformer  batch*1*768-->batch*1*768
-        transformer_out_list = self.transformer(texts, texts_mask)
-        transformer_out = transformer_out_list[-1]
-        pool = nn.MaxPool1d(transformer_out.size()[1])
-        transformer_out_p = transformer_out.permute(0,2,1)
-        level2 = pool(transformer_out_p)
-        level2 = level2.squeeze(2)
-        # Level 3. conv batch*1*768-->batch*1*1*768-->batch*（2*768）
-        con_out = transformer_out.unsqueeze(1)
+        # Level 2. Temporal-Aware Encoding by biGRU
+        gru_init_out, _ = self.rnn(texts)
+        # gru_init_out = self.attention(gru_init_out, None)
+        # Reshape *final* output to (batch_size, hidden_size)
+        gru_out = Variable(torch.zeros(gru_init_out.size(0), self.rnn_output_size)).cuda()
+        for i, batch in enumerate(gru_init_out):
+            gru_out[i] = torch.mean(batch[:], 0)
+        level2 = self.dropout(gru_out)
+        # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        texts_mask_con = texts_mask.unsqueeze(2).expand(-1,-1,gru_init_out.size(2)) # (N,C,F1)
+        gru_init_out = gru_init_out * texts_mask_con
+        # level4
+        
+        con_out = gru_init_out.unsqueeze(1)
         con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
         con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
         con_out = torch.cat(con_out, 1)
         level3 = self.dropout(con_out)
 
-        # mapping
-        feature = torch.cat((level1, level2, level3), 1)
-        feature = self.mapping1(feature)
+
         # concatenation
-        # if self.concate == 'full': # level 1+2+3
+        features = torch.cat((level1, level2, level3), 1)
+        # features = torch.cat((level1, level2), 1)
         
+        # mapping to common space
+        features = self.text_mapping(features)
         if self.text_norm:
-            features = l2norm(feature)
+            features = l2norm(features)
 
         return features
 

@@ -49,7 +49,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
         model.logger = val_logger
 
         # compute the embeddings
-        vid_emb, cap_emb = model.forward_emb(videoId, text_data, video_data)
+        vid_emb, cap_emb, clip_gru, word_gru, vid_gru ,cap_gru = model.forward_emb(videoId, text_data, video_data)
 
         # initialize the numpy arrays given the size of the embeddings
         if video_embs is None:
