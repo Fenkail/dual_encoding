@@ -99,8 +99,7 @@ class Video_multilevel_encoding(nn.Module):
             ])
 
         # visual mapping
-        self.visual_full = MFC([1024,1024], opt.dropout, have_bn=True, have_last_bn=True)
-        self.visual_mapping = MFC([1024+2048+2048+1024,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.visual_mapping = MFC([1024+2048+2048,1024], opt.dropout, have_bn=True, have_last_bn=True)
 
 
     def forward(self, videos):
@@ -114,8 +113,8 @@ class Video_multilevel_encoding(nn.Module):
             videos_mean = videos_mean.cuda()
             videos_mask = videos_mask.cuda()
 
-        level1 = (videos_mean)
-        level4 = self.visual_full(videos_mean)
+        level1 = videos_mean
+
         # Level 2. Temporal-Aware Encoding by biGRU
         # RNN : batch*x*2048 --> batch*x*2048
         gru_init_out, _ = self.rnn(videos)
@@ -137,7 +136,7 @@ class Video_multilevel_encoding(nn.Module):
         level3 = self.dropout(con_out)
 
         # concatenation
-        features = torch.cat((level1, level2, level3, level4), 1)
+        features = torch.cat((level1, level2, level3), 1)
         # features = torch.cat((level1, level2), 1)
         
         # mapping to common space
@@ -183,8 +182,7 @@ class Text_multilevel_encoding(nn.Module):
             ])
         
         # multi fc layers
-        self.text_full = MFC([768,1024], opt.dropout, have_bn=True, have_last_bn=True)
-        self.text_mapping = MFC([768+2048+768*2+1024,1024], opt.dropout, have_bn=True, have_last_bn=True)
+        self.text_mapping = MFC([768+2048+768*2,1024], opt.dropout, have_bn=True, have_last_bn=True)
 
 
     def forward(self, text, *args):
@@ -197,7 +195,6 @@ class Text_multilevel_encoding(nn.Module):
 
         # Level 1. attention  batch*768
         level1 = texts_mean
-        level4 = self.text_full(texts_mean)
         # Level 2. Temporal-Aware Encoding by biGRU
         gru_init_out, _ = self.rnn(texts)
         # Reshape *final* output to (batch_size, hidden_size)
@@ -215,7 +212,7 @@ class Text_multilevel_encoding(nn.Module):
         level3 = self.dropout(con_out)
 
         # concatenation
-        features = torch.cat((level1, level2, level3, level4), 1)
+        features = torch.cat((level1, level2, level3), 1)
         # features = torch.cat((level1, level2), 1)
         
         # mapping to common space
