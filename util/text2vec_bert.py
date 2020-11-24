@@ -9,7 +9,7 @@ import torch.nn as nn
 from tqdm import tqdm
 import random
 from multiprocessing import set_start_method
-from jieba_pos import PartOfSpeech
+
 
 try:
     set_start_method('spawn')
@@ -271,7 +271,23 @@ def word_pipeline():
     print('不满两个词向量的共这么多：')
     print(wrong)
 
-
+def PartOfSpeech(sentence):
+    '''
+    1. 文本读取，每一个视频ID对应10条句子，数据整理
+    2. 文本词性提取，整理为{non： verb：，adj：}
+    3. 向量提取，chembed_fine:[{non： verb：，adj：},{}。。。{}]
+    :return:
+    '''
+    word_out,flag_out = [],[]
+    for sent in sentence:
+        sentence_seged = jieba.posseg.cut(sent.strip())
+        outstr = ''
+        for x in sentence_seged:
+            outstr+="{}/{},".format(x.word,x.flag)
+            word_out.append(x.word)
+            flag_out.append(x.flag)
+   
+    return word_out, flag_out
 if __name__ == "__main__":
     word_pipeline()
 

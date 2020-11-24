@@ -19,6 +19,11 @@ from tensorboardX import SummaryWriter
 import argparse
 from basic.constant import ROOT_PATH
 from scipy.spatial import distance
+from util.text2vec_bert import text_embed
+from util.jieba_pos import PartOfSpeech
+import sys
+sys.path.append('/home/fengkai/PycharmProjects/kinetics-i3d-pytorch')
+from extract_features_other import extract_video
 
 def parse_args():
     # Hyper Parameters
@@ -53,7 +58,7 @@ def evaluation(model, videoId, text_data, video_data):
 
 def main():
     opt = parse_args()
-    # print(json.dumps(vars(opt), indent=2))
+    print(json.dumps(vars(opt), indent=2))
 
     rootpath = opt.rootpath
     resume = os.path.join(opt.logger_name, opt.checkpoint_name)
@@ -65,34 +70,36 @@ def main():
     checkpoint = torch.load(resume)
     start_epoch = checkpoint['epoch']
     best_rsum = checkpoint['best_rsum']
-    # print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
-        #   .format(resume, start_epoch, best_rsum))
+    print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
+          .format(resume, start_epoch, best_rsum))
     options = checkpoint['opt']
     # 判断options是都拥有concate这个属性
     if not hasattr(options, 'concate'):
         setattr(options, "concate", "full")
 
-    # 文件名称
-    visual_file_path = os.path.join(rootpath, 'vatex/video_embed_info/val_video') 
-    cap_file_path = os.path.join(rootpath, 'vatex/text_embed_info/val_mean_multi_np')
+    # 文件名称  地址
+    # video_path = ''
+    # text = '东方红一号里的中国故事'
+    # text = '自制美食:烤牛肉丸串'
+    # text = '山东费县果业微课系列(一):果园生草的好处'
+    # text = '电影《风平浪静》“案”潮汹涌 演技派现场碰撞来真的'
+    text = '我想去种苹果'
+    
     # Construct the model
     model = get_model(options.model)(options)
     model.load_state_dict(checkpoint['model'])
     model.Eiters = checkpoint['Eiters']
     model.val_start()
 
-    # set data 
-    cap_files = os.listdir(cap_file_path)
-    caption = random.sample(cap_files, 1)
-    video_id = caption[0][:-4]
-    text_id = caption[0][:-4]
-    print('视频的ID为：',video_id)
-    text_data = np.load(os.path.join(cap_file_path, text_id+'.npz'), allow_pickle=True)
-    text_embeds = text_data['word_embed']
-    text_stence_embeds = torch.tensor([text_data['setence_embed']])
-    video_embed = (np.load(os.path.join(visual_file_path, video_id+'.npy')))[0]
+    # ?*768
+    text_data = get_text_feature(text)
+    text_embeds = text_data[0]
+    text_stence_embeds = torch.tensor([text_data[1]])
+    #  ?*1024
+    videoId = ['argi_grass.mp4']
+    video_embed = get_video_feature(videoId, '/home/fengkai/dataset/video_c')
     text_tensor = torch.tensor([text_embeds])
-    video_tensor = torch.tensor([video_embed])
+    video_tensor = torch.tensor(video_embed[0])
     
     video_lengths = [min(64, len(frame)) for frame in video_tensor]
     video_tensor_dim = len(video_tensor[0][0])
@@ -124,7 +131,7 @@ def main():
     text_data = (text, text_stence, texts_mask, text_lengths)
 
     # data compute
-    video_embs, cap_embs = evaluation(model, video_id, text_data, video_data)
+    video_embs, cap_embs = evaluation(model, videoId, text_data, video_data)
     with torch.no_grad():
         video_embs = torch.nn.functional.normalize(video_embs).cpu()
         cap_embs = torch.nn.functional.normalize(cap_embs).cpu()
@@ -144,6 +151,22 @@ def main():
 
     
     print(" *The distance of video & text:", score)
+
+
+def get_video_feature(video_list,video_path):
+    data = extract_video(video_list,video_path)
+    return data
+
+def get_text_feature(text):
+    text_processer = text_embed('Chinese')
+    ch_caps = [text]
+    ch_pos = PartOfSpeech(ch_caps)
+    features = text_processer.process_ch(ch_caps)
+    word_embed = features[0][0]
+    setence_embed = features[1][0]
+    data = (word_embed, setence_embed, ch_pos)
+    return data
+    
 
 if __name__ == '__main__':
     main()

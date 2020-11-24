@@ -27,9 +27,9 @@ class MultiHeadedSelfAttention(nn.Module):
                 n_heads:
         """
         super().__init__()
-        self.proj_q = nn.Linear(prop['dim'], prop['dim'])
-        self.proj_k = nn.Linear(prop['dim'], prop['dim'])
-        self.proj_v = nn.Linear(prop['dim'], prop['dim'])
+        self.proj_q = nn.Linear(prop['dim1'], prop['dim2'])
+        self.proj_k = nn.Linear(prop['dim1'], prop['dim2'])
+        self.proj_v = nn.Linear(prop['dim1'], prop['dim2'])
         self.drop = nn.Dropout(prop['p_drop_attn'])
         self.scores = None  # for visualization
         self.n_heads = prop['n_heads']
