@@ -72,13 +72,13 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='initial learning rate')
     parser.add_argument('--lr_decay_rate', default=0.99, type=float, help='learning rate decay rate. (default: 0.99)')
     parser.add_argument('--grad_clip', type=float, default=2, help='gradient clipping threshold')
-    parser.add_argument('--resume', default='/home/fengkai/PycharmProjects/dual_encoding/result/fengkai_vatex_multi-cyc/dual_encoding_concate_full_dp_0.2_measure_cosine/vocab_word_vocab_5_word_dim_768_text_rnn_size_1024_text_norm_True_kernel_sizes_2-3-4_num_512/visual_feat_dim_1024_visual_rnn_size_1024_visual_norm_True_kernel_sizes_2-3-4-5_num_512/mapping_text_0-2048_img_0-2048/loss_func_mrl_margin_0.2_direction_all_max_violation_False_cost_style_sum/optimizer_adam_lr_0.0001_decay_0.99_grad_clip_2.0_val_metric_recall/runs_25_gru+32/model_best.pth.tar', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
+    parser.add_argument('--resume', default='/home/fengkai//model_best.pth.tar', type=str, metavar='PATH', help='path to latest checkpoint (default: none)')
     parser.add_argument('--val_metric', default='recall', type=str, help='performance metric for validation (mir|recall)')
     # misc
     parser.add_argument('--num_epochs', default=100, type=int, help='Number of training epochs.')
     parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
     parser.add_argument('--workers', default=2, type=int, help='Number of data loader workers.')
-    parser.add_argument('--postfix', default='runs_2_att', help='Path to save the model and Tensorboard log.')
+    parser.add_argument('--postfix', default='runs_4_att_auc', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
     parser.add_argument('--cv_name', default='fengkai_vatex_classify', type=str, help='')
 
@@ -197,13 +197,13 @@ def main():
         train(opt, data_loaders_train, model, epoch)
 
         # evaluate on validation set
-        acc, pre, recall, f1 = validate(opt, data_loaders_val, model, measure=opt.measure)
+        acc, pre, recall, f1, auc = validate(opt, data_loaders_val, model, measure=opt.measure)
 
         # remember best R@ sum and save checkpoint
-        is_best = (acc+f1) > best_rsum
-        best_rsum = max((acc+f1), best_rsum)
-        print(' * score: ', (acc, pre, recall, f1))
-        print(' * Current perf: {}'.format(acc+f1))
+        is_best = (auc) > best_rsum
+        best_rsum = max((auc), best_rsum)
+        print(' ** score ** acc:{}\t pre:{}\t recall:{}\t f1:{}\t auc:{} '.format(acc, pre, recall, f1, auc))
+        print(' * Current perf: {}'.format(auc))
         print(' * Best perf: {}'.format(best_rsum))
         print('')
         fout_val_metric_hist.write('epoch_%d: %f\n' % (epoch, f1))
@@ -284,12 +284,13 @@ def train(opt, train_loader, model, epoch):
 def validate(opt, val_loader, model, measure='cosine'):
     # compute the encoding for all the validation video and captions
     scores = evaluation_vatex_classify.encode_data(model, val_loader, opt.log_step, logging.info)
-    acc, pre, recall, f1 = scores
+    acc, pre, recall, f1, auc = scores
     # record metrics in tensorboard
     tb_logger.log_value('acc', acc, step=model.Eiters)
     tb_logger.log_value('pre', pre, step=model.Eiters)
     tb_logger.log_value('recall', recall, step=model.Eiters)
     tb_logger.log_value('f1', f1, step=model.Eiters)
+    tb_logger.log_value('auc', f1, step=model.Eiters)
 
     return scores
 

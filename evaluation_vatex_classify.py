@@ -47,7 +47,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
 
         # compute the embeddings
         with torch.no_grad():
-            logit, label, vid_emb, cap_emb= model.forward_emb(videoId, text_data, video_data, flag)
+            logit, label= model.forward_emb(videoId, text_data, video_data, flag)
 
         # initialize the numpy arrays given the size of the embeddings
 
@@ -68,12 +68,23 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=True)
         del video_data, text_data, videoId
     labels = labels[1:]
     logits = logits[1:]
-    logits = logits.max(-1)
-    predict = np.array(list((map(lambda x:np.where(x<0.5, 0, 1),logits))))
+    predict = logits.argmax(1)
+    # predict = np.array(list((map(lambda x:np.where(x<0.5, 0, 1),logits))))
     # predict = np.array(list((map(lambda x:np.where(x[0]<x[1], 0, 1),logits))))
     acc = metrics.accuracy_score(labels, predict)
     pre = metrics.precision_score(labels, predict)
     recall = metrics.recall_score(labels, predict)
     f1 = metrics.f1_score(labels, predict)
-    scores = (acc, pre, recall, f1)
+    # prob = score_probability(logits)
+    auc = metrics.roc_auc_score(labels, predict)
+    scores = (acc, pre, recall, f1, auc)
     return scores
+
+
+
+# def score_probability(logits):
+#     logits = torch.tensor(logits)
+#     soft = torch.nn.Softmax()
+#     prob = soft(logits)
+#     prob = torch.max(prob,1)[0]
+#     return prob.numpy()

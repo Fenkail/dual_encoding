@@ -9,6 +9,7 @@ import torchvision.models as models
 from torch.autograd import Variable
 from torch.nn.utils.clip_grad import clip_grad_norm  # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from model_part.attention import MultiHeadedSelfAttention
 # from model_part.loss import TripletLoss
 # from model_part.cycleloss import CycleConsistencyLoss
 
@@ -100,7 +101,6 @@ class Video_multilevel_encoding(nn.Module):
 
         # visual mapping
         # self.visual_mapping = MFC([1024+2048+2048,1024], opt.dropout, have_bn=True, have_last_bn=True)
-
 
     def forward(self, videos):
         """Extract video feature vectors."""
@@ -234,12 +234,11 @@ class Cross_modal(nn.Module):
                                        out_features=2,
                                        bias=True)
         self.att = MultiHeadedSelfAttention({
-            'dim1':2048,
-            'dim2':2048,
+            'dim':2048,
             'p_drop_attn':0.2,
             'n_heads':8
         })
-        # 
+        
 
     def forward(self, vid_emb, cap_emb, label):
         input_tensor = torch.cat([vid_emb,cap_emb], dim=1)
@@ -278,16 +277,16 @@ class BaseModel(object):
         self.text_encoding.eval()
 
 
-    def forward_loss(self, logits, label, vid_emb, *agrs, **kwargs):
+    def forward_loss(self, logits, label, *agrs, **kwargs):
         """
         Compute the loss 
         """
         if label is not None:
             loss = self.loss_function(logits, label)*100
         if torch.__version__ == '0.3.1':  # loss.item() for 0.4.0, loss.data[0] for 0.3.1
-            self.logger.update('Le', loss.data[0], vid_emb.size(0)) 
+            self.logger.update('Le', loss.data[0], logits.size(0)) 
         else:
-            self.logger.update('Le', loss.item(), vid_emb.size(0)) 
+            self.logger.update('Le', loss.item(), logits.size(0)) 
         return loss
 
     def train_emb(self, videoId, cap_tensor, video_tensor, flag, *args):
@@ -298,11 +297,11 @@ class BaseModel(object):
         self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
 
         # compute the embeddings
-        logits, labels, vid_emb, cap_emb = self.forward_emb(videoId, cap_tensor,video_tensor ,flag)
+        logits, labels = self.forward_emb(videoId, cap_tensor,video_tensor ,flag)
 
         # measure accuracy and record loss
         self.optimizer.zero_grad()
-        loss = self.forward_loss(logits, labels, vid_emb)
+        loss = self.forward_loss(logits, labels)
         
          # add cluster loss
 
@@ -317,7 +316,7 @@ class BaseModel(object):
             clip_grad_norm(self.params, self.grad_clip)
         self.optimizer.step()
 
-        return vid_emb.size(0), loss_value
+        return logits.size(0), loss_value
 
 
 
@@ -374,7 +373,7 @@ class Dual_Encoding(BaseModel):
         vid_emb,clip_gru,vid_gru = self.vid_encoding(video_tensor)
         cap_emb,word_gru,cap_gru = self.text_encoding(cap_tensor)
         logits,labels = self.classification(vid_emb, cap_emb, flag)
-        return  logits,labels,vid_emb,cap_emb
+        return  logits,labels
 
 
 
